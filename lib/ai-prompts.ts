@@ -1,0 +1,43 @@
+import type { Prefs } from './types';
+
+// 把口味/健康偏好拼成系统约束，喂给所有 AI 调用
+export function prefsToConstraints(p: Prefs): string {
+  const lines: string[] = [];
+  lines.push(`用户菜系偏好：${p.cuisine || '不限'}。`);
+  lines.push(p.spicy ? '可以接受辣味。' : '【重要】完全不吃辣，不要任何辣椒、辣酱、花椒等辛辣调料。');
+  if (p.avoid && p.avoid.length) {
+    lines.push(`【忌口】绝对不要使用以下食材：${p.avoid.join('、')}。`);
+  }
+  if (p.health) lines.push(`健康状况：${p.health}。需低盐、低糖、低油低脂，清淡为主。`);
+  if (p.redMeatMaxMeals != null) {
+    lines.push(`红肉（猪牛羊）限制：每周最多 ${p.redMeatMaxMeals} 顿、累计不超过 ${p.redMeatMaxGrams} 克，其余多用鱼、禽、豆制品和蔬菜。`);
+  }
+  return lines.join('\n');
+}
+
+// 1) 分析单道菜：做法 + 原材料清单
+export function recipePrompt(dish: string, prefs: Prefs) {
+  const constraints = prefsToConstraints(prefs);
+  return {
+    system: `你是一位贴心的家庭营养师兼广式家常菜厨师。请严格遵守以下约束：\n${constraints}\n\n只输出 JSON，不要任何额外文字或 markdown 代码块标记。`,
+    user: `我想吃「${dish}」。请在符合上述约束的前提下，给出适合家庭做的做法，并列出需要采购的原材料。\n严格按如下 JSON 结构返回：\n{\n  "recipe": "分步骤做法，用换行分隔，尽量清淡健康",\n  "ingredients": [{"name":"食材名","amount":"用量"}],\n  "preps": [{"item":"前一天需要解冻或预处理的事项","kind":"defrost或prep"}]\n}\npreps 里只放真正需要提前一天准备的（比如解冻肉类、泡发干货、腌制），没有就给空数组。`,
+  };
+}
+
+// 2) 生成一周三餐推荐
+export function weekPlanPrompt(prefs: Prefs, weekDates: string[]) {
+  const constraints = prefsToConstraints(prefs);
+  return {
+    system: `你是家庭营养师，为高血脂人群规划一周清淡健康三餐。严格遵守：\n${constraints}\n\n只输出 JSON，不要任何额外文字或 markdown 标记。`,
+    user: `请规划这一周（${weekDates[0]} 到 ${weekDates[6]}）共 7 天、每天早午晚三餐。\n务必满足：整体低盐低糖低脂；红肉全周累计不超过约束克数和顿数；多用鱼、禽、豆制品、时蔬；广式清淡口味；不辣、无忌口食材。\n严格按如下 JSON 结构返回（days 长度必须为 7，顺序对应给定日期）：\n{\n  "days": [\n    {"date":"${weekDates[0]}","breakfast":"菜名","lunch":"菜名","dinner":"菜名"}\n  ]\n}`,
+  };
+}
+
+// 3) 根据现有食材反推能做的菜
+export function fromIngredientsPrompt(ingredients: string, prefs: Prefs) {
+  const constraints = prefsToConstraints(prefs);
+  return {
+    system: `你是广式家常菜厨师兼营养师。严格遵守：\n${constraints}\n\n只输出 JSON，不要额外文字或 markdown 标记。`,
+    user: `我现在家里有这些食材：${ingredients}。\n请在符合约束的前提下，推荐 3~5 道可以做的菜，可以补充少量常见调料/配菜。\n严格按如下 JSON 结构返回：\n{\n  "dishes": [\n    {"title":"菜名","reason":"为什么推荐/用到哪些现有食材","missing":["还需补买的少量食材"]}\n  ]\n}`,
+  };
+}

@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  /* 暖灰底 + 日式健康，亮色点缀 */
+  --bg:        #f5f1ea;   /* 主背景：暖米灰 */
+  --surface:   #fbf8f3;   /* 卡片面 */
+  --surface-2: #efe9df;   /* 次级面 */
+  --line:      #e3dccf;   /* 描边 */
+  --ink:       #3a3530;   /* 主文字：暖黑 */
+  --ink-soft:  #7a7268;   /* 次文字 */
+  --accent:    #e07a4f;   /* 点缀：暖橙陶土（有食欲） */
+  --accent-2:  #8a9a5b;   /* 抹茶绿 */
+  --warn:      #d98c3f;   /* 提醒暖琥珀 */
+  --danger:    #c25c4e;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+}
+
+/* 滚动条淡化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+@layer utilities {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+  }
+  .chip {
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .accent-grad {
+    background: linear-gradient(135deg, #e8895f, #e07a4f);
+  }
+}
