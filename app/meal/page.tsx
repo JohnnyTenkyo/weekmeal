@@ -3,11 +3,11 @@ import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   getMeal, upsertMeal, deleteMeal, replaceIngredients, toggleIngredient,
-  addPrep, togglePrep, deletePrep, getPreps,
+  addPrep, togglePrep, deletePrep, getPreps, getMealsBetween,
 } from '@/lib/db';
 import type { Meal, MealType, Ingredient, Prep } from '@/lib/types';
 import { MEAL_LABELS } from '@/lib/types';
-import { ymdLabel, addDays, parseYMD, toYMD } from '@/lib/date';
+import { ymdLabel, addDays, parseYMD, toYMD, startOfWeek, weekDates } from '@/lib/date';
 import { Button, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
@@ -24,6 +24,8 @@ function MealEditor() {
   const [loading, setLoading] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ title: string; reason: string } | null>(null);
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
 
@@ -85,6 +87,39 @@ function MealEditor() {
     ping('已保存 ✓');
   }
 
+  // 换一道菜：让 AI 推荐一个新菜，避开本周其它餐
+  async function handleSuggest() {
+    setSuggestLoading(true);
+    try {
+      // 收集本周所有已安排的菜名（排除当前这一餐）
+      const ws = startOfWeek(parseYMD(date));
+      const wdates = weekDates(ws);
+      const weekMeals = await getMealsBetween(wdates[0], wdates[6]);
+      const existing = weekMeals
+        .filter((m) => !(m.date === date && m.meal_type === type))
+        .map((m) => m.title)
+        .filter(Boolean);
+      const resp = await fetch('/api/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'suggest-dish', mealLabel: MEAL_LABELS[type], existingDishes: existing }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) { ping(json.error || 'AI 推荐失败'); return; }
+      setSuggestion({ title: json.result.title || '', reason: json.result.reason || '' });
+    } catch (e: any) {
+      ping('出错：' + (e?.message || ''));
+    } finally { setSuggestLoading(false); }
+  }
+
+  // 采用推荐：填入输入框，清掉旧的做法/食材关联留待重新分析
+  function acceptSuggestion() {
+    if (!suggestion) return;
+    setTitle(suggestion.title);
+    setSuggestion(null);
+    ping('已填入，可点「保存并让 AI 分析」出做法');
+  }
+
   async function handleDelete() {
     if (!meal) { router.push('/'); return; }
     if (!confirm('确定删除这一餐的全部记录？')) return;
@@ -130,6 +165,26 @@ function MealEditor() {
                 {aiLoading ? <Spinner label="AI 分析中…" /> : '保存并让 AI 分析'}
               </Button>
               <Button variant="soft" onClick={handleSaveOnly} disabled={aiLoading}>仅保存</Button>
+            </div>
+
+            <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--line)' }}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm" style={{ color: 'var(--ink-soft)' }}>不喜欢这一餐？</span>
+                <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading || aiLoading}>
+                  {suggestLoading ? <Spinner label="AI 想菜中…" /> : '🔄 换一道菜'}
+                </Button>
+              </div>
+              {suggestion && (
+                <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                  <div className="mb-1 text-base font-semibold" style={{ color: 'var(--ink)' }}>{suggestion.title}</div>
+                  <p className="mb-3 text-sm" style={{ color: 'var(--ink-soft)' }}>{suggestion.reason}</p>
+                  <div className="flex gap-2">
+                    <Button onClick={acceptSuggestion} className="flex-1">采用这道</Button>
+                    <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading}>再换一个</Button>
+                    <Button variant="ghost" onClick={() => setSuggestion(null)}>取消</Button>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 

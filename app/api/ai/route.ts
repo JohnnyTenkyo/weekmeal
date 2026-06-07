@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { recipePrompt, weekPlanPrompt, fromIngredientsPrompt } from '@/lib/ai-prompts';
+import { recipePrompt, weekPlanPrompt, fromIngredientsPrompt, suggestDishPrompt } from '@/lib/ai-prompts';
 import type { Prefs } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
       prompt = weekPlanPrompt(prefs, body.weekDates);
     } else if (task === 'from-ingredients') {
       prompt = fromIngredientsPrompt(body.ingredients, prefs);
+    } else if (task === 'suggest-dish') {
+      prompt = suggestDishPrompt(body.mealLabel, body.existingDishes || [], prefs);
     } else {
       return NextResponse.json({ error: '未知任务类型' }, { status: 400 });
     }

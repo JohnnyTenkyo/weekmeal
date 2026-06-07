@@ -41,3 +41,20 @@ export function fromIngredientsPrompt(ingredients: string, prefs: Prefs) {
     user: `我现在家里有这些食材：${ingredients}。\n请在符合约束的前提下，推荐 3~5 道可以做的菜，可以补充少量常见调料/配菜。\n严格按如下 JSON 结构返回：\n{\n  "dishes": [\n    {"title":"菜名","reason":"为什么推荐/用到哪些现有食材","missing":["还需补买的少量食材"]}\n  ]\n}`,
   };
 }
+
+// 4) 换一道菜：为某一餐生成一个新菜建议，避开本周已有的菜
+export function suggestDishPrompt(
+  mealLabel: string,
+  existingDishes: string[],
+  prefs: Prefs
+) {
+  const constraints = prefsToConstraints(prefs);
+  const avoidList = existingDishes.filter(Boolean);
+  const avoidText = avoidList.length
+    ? `本周已经安排了以下菜，请【不要重复、也不要高度相似】：${avoidList.join('、')}。`
+    : '本周暂时没有其它菜。';
+  return {
+    system: `你是广式家常菜厨师兼营养师，为高血脂人群推荐清淡健康的单道菜。严格遵守：\n${constraints}\n\n只输出 JSON，不要任何额外文字或 markdown 标记。`,
+    user: `请为「${mealLabel}」推荐一道新菜。\n${avoidText}\n要求：符合上述健康与口味约束；尽量与已有菜在主料、做法上有区分，丰富一周的多样性。\n严格按如下 JSON 结构返回：\n{\n  "title": "菜名",\n  "reason": "一句话推荐理由"\n}`,
+  };
+}
