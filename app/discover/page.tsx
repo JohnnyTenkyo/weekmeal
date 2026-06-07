@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { upsertMeal, getUserPrefs, replaceIngredients, addPrep, deletePrepsForMeal } from '@/lib/db';
+import { upsertMeal, getUserPrefs, replaceIngredients, addPrep, deletePrepsForMeal, getMealsBetween } from '@/lib/db';
 import type { MealType } from '@/lib/types';
 import { MEAL_TYPES, MEAL_LABELS } from '@/lib/types';
 import { startOfWeek, weekDates, ymdLabel, WEEK_LABELS, addDays, todayYMD, parseYMD, toYMD } from '@/lib/date';
@@ -32,6 +32,7 @@ export default function DiscoverPage() {
   const [plan, setPlan] = useState<DayPlan[] | null>(null);
   const [planTarget, setPlanTarget] = useState<0 | 1>(0); // 当前生成的是本周还是下周
   const [saving, setSaving] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState<{ count: number } | null>(null);
 
   // 冰箱反推
   const [fridge, setFridge] = useState('');
@@ -111,8 +112,31 @@ export default function DiscoverPage() {
     finally { setPlanLoading(null); }
   }
 
+  // 点「采用并写入」：先看这一周是否已有菜，有则弹确认覆盖
   async function applyWeek() {
+    if (!plan || !user) return;
+    setSaving(true);
+    try {
+      const dates = plan.map((d) => d.date);
+      const existing = await getMealsBetween(user.username, dates[0], dates[dates.length - 1]);
+      const hasExisting = existing.filter((m) => m.title && m.title.trim()).length;
+      if (hasExisting > 0) {
+        setSaving(false);
+        setConfirmOverwrite({ count: hasExisting });
+        return; // 等用户确认
+      }
+      setSaving(false);
+      await doApplyWeek();
+    } catch (e: any) {
+      ping('写入失败：' + (e?.message || ''));
+      setSaving(false);
+    }
+  }
+
+  // 真正写入：干净覆盖（菜名 + 清掉旧做法/健康说明/采购清单/预处理）
+  async function doApplyWeek() {
     if (!plan) return;
+    setConfirmOverwrite(null);
     setSaving(true);
     try {
       for (const d of plan) {
@@ -121,7 +145,13 @@ export default function DiscoverPage() {
         ];
         for (const [type, title] of entries) {
           if (title && title.trim()) {
-            await upsertMeal({ owner: user!.username, date: d.date, meal_type: type, title: title.trim(), author: 'AI' });
+            // recipe/health_note 不传 => 置空；再清掉旧采购清单和预处理，彻底替换
+            const saved = await upsertMeal({
+              owner: user!.username, date: d.date, meal_type: type,
+              title: title.trim(), health_note: '', health_conflict: false, author: 'AI',
+            });
+            await replaceIngredients(saved.id, []);
+            await deletePrepsForMeal(saved.id);
           }
         }
       }
@@ -275,6 +305,26 @@ export default function DiscoverPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+      {confirmOverwrite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,0.35)' }}
+          onClick={() => { setConfirmOverwrite(null); setSaving(false); }}>
+          <div className="w-full max-w-sm rounded-2xl p-5"
+            style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}
+            onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-2 text-base font-semibold" style={{ color: 'var(--ink)' }}>覆盖现有菜单？</h3>
+            <p className="mb-4 text-sm leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+              {planTarget === 1 ? '下周' : '本周'}已经有 {confirmOverwrite.count} 餐安排了。继续将用这份新方案覆盖，原来的菜名、做法和采购清单都会被替换，确定吗？
+            </p>
+            <div className="flex gap-2">
+              <Button variant="soft" onClick={() => { setConfirmOverwrite(null); setSaving(false); }} className="flex-1">取消</Button>
+              <Button variant="danger" onClick={doApplyWeek} disabled={saving} className="flex-1">
+                {saving ? '覆盖中…' : '确认覆盖'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
       <Toast msg={toast} />
