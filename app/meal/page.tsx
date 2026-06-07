@@ -3,7 +3,7 @@ import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   getMeal, upsertMeal, deleteMeal, replaceIngredients, toggleIngredient,
-  addPrep, togglePrep, deletePrep, getPreps, getMealsBetween,
+  addPrep, togglePrep, deletePrep, deletePrepsForMeal, getPreps, getMealsBetween,
 } from '@/lib/db';
 import type { Meal, MealType, Ingredient, Prep } from '@/lib/types';
 import { MEAL_LABELS } from '@/lib/types';
@@ -54,18 +54,20 @@ function MealEditor() {
       const resp = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'recipe', dish: title.trim(), mealLabel: MEAL_LABELS[type], extra: extra.trim() }),
+        body: JSON.stringify({ task: 'recipe', dish: title.trim(), mealLabel: MEAL_LABELS[type], extra: extra.trim(), username: user?.username }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || 'AI 调用失败'); await load(); return; }
 
       const r = json.result;
-      await upsertMeal({ owner: user!.username, date, meal_type: type, title: title.trim(), recipe: r.recipe || '', health_note: r.health_note || '', author });
+      await upsertMeal({ owner: user!.username, date, meal_type: type, title: title.trim(), recipe: r.recipe || '', health_note: r.health_note || '', health_conflict: !!r.conflict, author });
       if (Array.isArray(r.ingredients)) {
         await replaceIngredients(saved.id, r.ingredients.map((i: any) => ({
           name: i.name || '', amount: i.amount || '',
         })));
       }
+      // 替换/重新分析这一餐前，先清掉旧的预处理提醒，保持同步
+      await deletePrepsForMeal(saved.id);
       // 预处理默认放到「前一天」提醒
       if (Array.isArray(r.preps) && r.preps.length) {
         const prepDate = toYMD(addDays(parseYMD(date), -1));
@@ -105,7 +107,7 @@ function MealEditor() {
       const resp = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'suggest-dish', mealLabel: MEAL_LABELS[type], existingDishes: existing, extra: extra.trim() }),
+        body: JSON.stringify({ task: 'suggest-dish', mealLabel: MEAL_LABELS[type], existingDishes: existing, extra: extra.trim(), username: user?.username }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || 'AI 推荐失败'); return; }
@@ -205,10 +207,17 @@ function MealEditor() {
           )}
 
           {meal?.health_note && (
-            <section className="card p-4" style={{ background: 'rgba(138,154,91,0.10)' }}>
-              <h3 className="mb-2 font-semibold" style={{ color: 'var(--accent-2)' }}>💚 健康说明</h3>
-              <p className="text-sm leading-relaxed" style={{ color: 'var(--ink)' }}>{meal.health_note}</p>
-            </section>
+            meal.health_conflict ? (
+              <section className="card p-4" style={{ background: 'rgba(200,80,80,0.10)', border: '1px solid var(--danger)' }}>
+                <h3 className="mb-2 font-semibold" style={{ color: 'var(--danger)' }}>⚠️ 健康警示</h3>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--danger)' }}>{meal.health_note}</p>
+              </section>
+            ) : (
+              <section className="card p-4" style={{ background: 'rgba(138,154,91,0.10)' }}>
+                <h3 className="mb-2 font-semibold" style={{ color: 'var(--accent-2)' }}>💚 健康说明</h3>
+                <p className="text-sm leading-relaxed" style={{ color: 'var(--ink)' }}>{meal.health_note}</p>
+              </section>
+            )
           )}
 
           {ingredients.length > 0 && (

@@ -43,10 +43,11 @@ export async function getMeal(owner: string, date: string, mealType: MealType): 
 
 // 创建或更新某餐（按 date+meal_type 唯一）
 export async function upsertMeal(m: {
-  owner: string; date: string; meal_type: MealType; title: string; recipe?: string; author?: string; health_note?: string;
+  owner: string; date: string; meal_type: MealType; title: string; recipe?: string; author?: string; health_note?: string; health_conflict?: boolean;
 }): Promise<Meal> {
   const row: any = { owner: m.owner, date: m.date, meal_type: m.meal_type, title: m.title, recipe: m.recipe ?? '', author: m.author ?? '' };
   if (m.health_note !== undefined) row.health_note = m.health_note;
+  if (m.health_conflict !== undefined) row.health_conflict = m.health_conflict;
   const { data, error } = await supabase
     .from('meals')
     .upsert(row, { onConflict: 'owner,date,meal_type' })
@@ -106,6 +107,12 @@ export async function togglePrep(id: string, done: boolean): Promise<void> {
 
 export async function deletePrep(id: string): Promise<void> {
   const { error } = await supabase.from('preps').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// 删除某餐关联的全部预处理提醒（替换菜品时先清旧的，保持同步）
+export async function deletePrepsForMeal(mealId: string): Promise<void> {
+  const { error } = await supabase.from('preps').delete().eq('meal_id', mealId);
   if (error) throw error;
 }
 

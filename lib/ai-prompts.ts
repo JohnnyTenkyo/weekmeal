@@ -1,5 +1,24 @@
 import type { Prefs } from './types';
 
+// 吃几分饱的文字描述
+function fullnessLabel(f: number): string {
+  if (f <= 5) return '只吃五六分饱，份量偏少、清淡';
+  if (f <= 7) return '吃七分饱，份量适中';
+  if (f <= 8) return '吃八分饱，正常家常份量';
+  return '吃饱吃满（九到十分饱），份量要足、管够';
+}
+
+// 份量约束：几人吃 + 几分饱，所有 AI 生成都带上
+export function portionConstraint(p: Prefs): string {
+  const people = p.peopleCount && p.peopleCount > 0 ? p.peopleCount : 2;
+  const full = p.fullness && p.fullness > 0 ? p.fullness : 8;
+  return `【份量】这一餐共 ${people} 人吃，目标${fullnessLabel(full)}。所有食材用量必须按 ${people} 人的量来计算，确保够吃、不浪费，主食和菜量都要匹配人数。`;
+}
+
+// 量化要求：精确克数 + 通俗说法
+const QUANTIFY_RULE =
+  '【用量必须量化】每一样食材和调料都要给出精确克数/毫升/个数，并在括号里补一个通俗说法，方便不用秤也能下厨，例如「生抽 15 克（约一汤勺）」「盐 3 克（约半茶匙）」「五花肉 250 克（约半斤）」「油 10 克（约一勺）」。常见换算参考：一茶匙≈5克、一汤勺/一勺≈15克、一斤=500克、半斤=250克。做法步骤里凡涉及调味也要写清用量。';
+
 // 把口味/健康偏好拼成系统约束，喂给所有 AI 调用
 export function prefsToConstraints(p: Prefs): string {
   const lines: string[] = [];
@@ -12,6 +31,7 @@ export function prefsToConstraints(p: Prefs): string {
   if (p.redMeatMaxMeals != null) {
     lines.push(`红肉（猪牛羊）限制：每周最多 ${p.redMeatMaxMeals} 顿、累计不超过 ${p.redMeatMaxGrams} 克，其余多用鱼、禽、豆制品和蔬菜。`);
   }
+  lines.push(portionConstraint(p));
   return lines.join('\n');
 }
 
@@ -29,7 +49,7 @@ function mealGuide(mealLabel: string): string {
   return '请按常理安排这一餐的合理份量与菜式。';
 }
 
-// 1) 分析单道菜：做法 + 原材料清单
+// 1) 分析单道菜：做法 + 原材料清单（含健康冲突检测）
 export function recipePrompt(dish: string, prefs: Prefs, mealLabel?: string, extra?: string) {
   const constraints = prefsToConstraints(prefs);
   const guide = mealLabel ? mealGuide(mealLabel) : '';
@@ -39,14 +59,18 @@ export function recipePrompt(dish: string, prefs: Prefs, mealLabel?: string, ext
     system: `你是一位贴心的家庭营养师兼广式家常菜厨师。请严格遵守以下约束：
 ${constraints}
 ${guide}
+${QUANTIFY_RULE}
+
+【健康冲突检测】这道菜是用户自己点的，可能并不适合他的健康状况。请认真判断：如果这道菜与用户的健康状况明显相背离（例如高血脂/高血压的人吃红烧肉、肥肉、油炸、动物内脏、高盐高糖等），你必须在 health_note 里【明确地、严肃地】警示，说清楚为什么不建议吃、有什么风险，并给出更健康的替代或改良做法。这种情况把 conflict 设为 true。如果这道菜是健康安全的，conflict 设为 false，health_note 正常说明好处即可。
 
 只输出 JSON，不要任何额外文字或 markdown 代码块标记。`,
     user: `我想吃「${dish}」。请在符合上述约束的前提下，给出适合家庭做的做法，并列出需要采购的原材料。${extraText}
 严格按如下 JSON 结构返回：
 {
-  "recipe": "分步骤做法，用换行分隔，尽量清淡健康",
-  "health_note": "结合用户健康状况，说明这道菜对身体的好处或注意点，2-3 句",
-  "ingredients": [{"name":"食材名","amount":"用量"}],
+  "recipe": "分步骤做法，用换行分隔，调味用量要量化（克数+通俗说法）",
+  "health_note": "结合用户健康状况说明；若与健康相背离则严肃警示风险并给改良建议",
+  "conflict": false,
+  "ingredients": [{"name":"食材名","amount":"精确克数+通俗说法，如 250克（约半斤）"}],
   "preps": [{"item":"前一天需要解冻或预处理的事项","kind":"defrost或prep"}]
 }
 preps 里只放真正需要提前一天准备的（比如解冻肉类、泡发干货、腌制），没有就给空数组。`,
@@ -58,7 +82,7 @@ export function weekPlanPrompt(prefs: Prefs, weekDates: string[]) {
   const constraints = prefsToConstraints(prefs);
   return {
     system: `你是家庭营养师，为高血脂人群规划一周清淡健康三餐。严格遵守：\n${constraints}\n\n只输出 JSON，不要任何额外文字或 markdown 标记。`,
-    user: `请规划这一周（${weekDates[0]} 到 ${weekDates[6]}）共 7 天、每天早午晚三餐。\n务必满足：整体低盐低糖低脂；红肉全周累计不超过约束克数和顿数；多用鱼、禽、豆制品、时蔬；广式清淡口味；不辣、无忌口食材。\n严格按如下 JSON 结构返回（days 长度必须为 7，顺序对应给定日期）：\n{\n  "days": [\n    {"date":"${weekDates[0]}","breakfast":"菜名","lunch":"菜名","dinner":"菜名"}\n  ]\n}`,
+    user: `请规划这一周（${weekDates[0]} 到 ${weekDates[6]}）共 7 天、每天早午晚三餐。\n务必满足：整体低盐低糖低脂；红肉全周累计不超过约束克数和顿数；多用鱼、禽、豆制品、时蔬；广式清淡口味；不辣、无忌口食材；份量按上述人数和分饱程度安排，保证够吃。\n严格按如下 JSON 结构返回（days 长度必须为 7，顺序对应给定日期）：\n{\n  "days": [\n    {"date":"${weekDates[0]}","breakfast":"菜名","lunch":"菜名","dinner":"菜名"}\n  ]\n}`,
   };
 }
 
@@ -68,6 +92,31 @@ export function fromIngredientsPrompt(ingredients: string, prefs: Prefs) {
   return {
     system: `你是广式家常菜厨师兼营养师。严格遵守：\n${constraints}\n\n只输出 JSON，不要额外文字或 markdown 标记。`,
     user: `我现在家里有这些食材：${ingredients}。\n请在符合约束的前提下，推荐 3~5 道可以做的菜，可以补充少量常见调料/配菜。\n严格按如下 JSON 结构返回：\n{\n  "dishes": [\n    {"title":"菜名","reason":"为什么推荐/用到哪些现有食材","missing":["还需补买的少量食材"]}\n  ]\n}`,
+  };
+}
+
+// 3b) 用指定的现有食材做一道菜，写入某一餐（只用列出的原材料）
+export function dishFromGivenPrompt(dish: string, available: string, prefs: Prefs, mealLabel?: string) {
+  const constraints = prefsToConstraints(prefs);
+  const guide = mealLabel ? mealGuide(mealLabel) : '';
+  return {
+    system: `你是一位贴心的家庭营养师兼广式家常菜厨师。请严格遵守以下约束：
+${constraints}
+${guide}
+${QUANTIFY_RULE}
+
+【只用现有食材】用户只想用家里现有的原材料做这道菜。ingredients 里【只能】包含用户提供的这些原材料（可以只用其中一部分），绝对不要引入用户没有的新原材料；唯一例外是水、盐、生抽、油这类最基本的厨房调味料可以少量使用。即便份量要满足人数，也只能在现有食材范围内调配。
+
+只输出 JSON，不要任何额外文字或 markdown 代码块标记。`,
+    user: `请用我现有的这些食材：${available}，做「${dish}」。份量要满足上述人数、保证够吃，但原材料只能从我列出的里面选。
+严格按如下 JSON 结构返回：
+{
+  "recipe": "分步骤做法，用换行分隔，调味用量要量化（克数+通俗说法）",
+  "health_note": "结合用户健康状况，说明这道菜对身体的好处或注意点，2-3 句",
+  "ingredients": [{"name":"食材名（必须来自我提供的列表）","amount":"精确克数+通俗说法"}],
+  "preps": [{"item":"前一天需要解冻或预处理的事项","kind":"defrost或prep"}]
+}
+preps 没有就给空数组。`,
   };
 }
 

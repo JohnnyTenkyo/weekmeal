@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { recipePrompt, weekPlanPrompt, fromIngredientsPrompt, suggestDishPrompt } from '@/lib/ai-prompts';
+import { recipePrompt, weekPlanPrompt, fromIngredientsPrompt, suggestDishPrompt, dishFromGivenPrompt } from '@/lib/ai-prompts';
 import type { Prefs } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -78,6 +78,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '尚未在「设置」里填写 AI API Key。' }, { status: 400 });
     }
 
+    const baseUrl = (ai_base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
+
+    // 测试 AI 配置是否可用：发一个最小请求，验证 key/url/model
+    if (task === 'test') {
+      try {
+        const resp = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai_api_key}` },
+          body: JSON.stringify({
+            model: ai_model || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: '请只回复两个字：成功' }],
+            temperature: 0,
+            stream: false,
+            max_tokens: 10,
+          }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          let hint = '';
+          if (resp.status === 401) hint = '（API Key 不正确或已失效）';
+          else if (resp.status === 404) hint = '（API URL 或模型名可能不对）';
+          else if (resp.status === 429) hint = '（请求过于频繁或额度不足）';
+          return NextResponse.json({ ok: false, error: `连接失败 (${resp.status})${hint}：${errText.slice(0, 200)}` }, { status: 200 });
+        }
+        const raw = await resp.text();
+        const content = extractContent(raw);
+        if (!content.trim()) {
+          return NextResponse.json({ ok: false, error: '连接成功但模型返回为空，请检查模型名是否正确。' }, { status: 200 });
+        }
+        return NextResponse.json({ ok: true, model: ai_model || 'gpt-4o-mini', sample: content.trim().slice(0, 30) });
+      } catch (e: any) {
+        return NextResponse.json({ ok: false, error: '无法连接到 AI 接口：' + (e?.message || '网络错误，请检查 API URL') }, { status: 200 });
+      }
+    }
+
     let prompt: { system: string; user: string };
     if (task === 'recipe') {
       prompt = recipePrompt(body.dish, prefs, body.mealLabel, body.extra);
@@ -87,11 +122,13 @@ export async function POST(req: NextRequest) {
       prompt = fromIngredientsPrompt(body.ingredients, prefs);
     } else if (task === 'suggest-dish') {
       prompt = suggestDishPrompt(body.mealLabel, body.existingDishes || [], prefs, body.extra);
+    } else if (task === 'dish-from-given') {
+      prompt = dishFromGivenPrompt(body.dish, body.available, prefs, body.mealLabel);
     } else {
       return NextResponse.json({ error: '未知任务类型' }, { status: 400 });
     }
 
-    const base = (ai_base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const base = baseUrl;
     // 上游接口偶发返回空内容/空流，自动重试最多 3 次
     let parsed: any = null;
     let lastRaw = '';

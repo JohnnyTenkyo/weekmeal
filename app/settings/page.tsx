@@ -19,6 +19,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [avoidInput, setAvoidInput] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
     if (!supabaseReady) { setLoading(false); return; }
@@ -50,6 +52,28 @@ export default function SettingsPage() {
     } finally { setPwdBusy(false); }
   }
 
+
+  async function onTestAI() {
+    if (!s) return;
+    if (!s.ai_api_key.trim()) { setTestResult({ ok: false, msg: '请先填写 API Key' }); return; }
+    setTesting(true); setTestResult(null);
+    try {
+      // 先把当前填写的 AI 配置保存，再测试（确保测的是最新值）
+      await saveSettings({ ai_api_key: s.ai_api_key, ai_base_url: s.ai_base_url, ai_model: s.ai_model });
+      const resp = await fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'test' }),
+      });
+      const json = await resp.json();
+      if (json.ok) {
+        setTestResult({ ok: true, msg: `配置成功 ✓ 模型「${json.model}」已连通` });
+      } else {
+        setTestResult({ ok: false, msg: json.error || '测试失败' });
+      }
+    } catch (e: any) {
+      setTestResult({ ok: false, msg: '测试出错：' + (e?.message || '') });
+    } finally { setTesting(false); }
+  }
 
   function setPrefs(patch: Partial<Prefs>) {
     if (!s) return;
@@ -85,7 +109,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <SectionTitle sub="AI 接入 + 口味与健康偏好，两人共用">设置</SectionTitle>
+      <SectionTitle>设置</SectionTitle>
       <ConfigBanner />
 
       {!supabaseReady ? (
@@ -122,8 +146,20 @@ export default function SettingsPage() {
             <label className="mb-1 block text-sm" style={{ color: 'var(--ink-soft)' }}>模型</label>
             <input value={s.ai_model}
               onChange={(e) => setS({ ...s, ai_model: e.target.value })}
-              placeholder="gpt-4o-mini" className="w-full rounded-xl border bg-white px-3 py-2 text-sm"
+              placeholder="gpt-4o-mini" className="mb-3 w-full rounded-xl border bg-white px-3 py-2 text-sm"
               style={{ borderColor: 'var(--line)' }} />
+            <Button variant="soft" onClick={onTestAI} disabled={testing} className="w-full">
+              {testing ? <Spinner label="测试中…" /> : '测试 AI 是否配置成功'}
+            </Button>
+            {testResult && (
+              <p className="mt-2 rounded-lg px-3 py-2 text-xs leading-relaxed"
+                style={{
+                  background: testResult.ok ? 'rgba(138,154,91,0.15)' : 'rgba(200,80,80,0.12)',
+                  color: testResult.ok ? 'var(--accent-2)' : 'var(--danger)',
+                }}>
+                {testResult.msg}
+              </p>
+            )}
           </section>
 
           <section className="card p-4">
@@ -187,6 +223,24 @@ export default function SettingsPage() {
                   className="w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
               </div>
             </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm" style={{ color: 'var(--ink-soft)' }}>几人吃饭</label>
+                <input type="number" min={1} value={s.prefs.peopleCount}
+                  onChange={(e) => setPrefs({ peopleCount: Math.max(1, Number(e.target.value) || 1) })}
+                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm" style={{ color: 'var(--ink-soft)' }}>吃几分饱（1-10）</label>
+                <input type="number" min={1} max={10} value={s.prefs.fullness}
+                  onChange={(e) => setPrefs({ fullness: Math.min(10, Math.max(1, Number(e.target.value) || 8)) })}
+                  className="w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              </div>
+            </div>
+            <p className="mt-2 text-xs" style={{ color: 'var(--ink-soft)' }}>
+              人数和分饱程度会用于 AI 生成菜谱时计算份量，保证够吃。
+            </p>
           </section>
 
           {auth.user && (

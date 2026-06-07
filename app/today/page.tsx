@@ -16,10 +16,13 @@ export default function TodayPage() {
   const tomorrow = toYMD(addDays(parseYMD(today), 1));
 
   const [todayPreps, setTodayPreps] = useState<Prep[]>([]);
+  const [tomorrowPreps, setTomorrowPreps] = useState<Prep[]>([]);
   const [tomorrowMeals, setTomorrowMeals] = useState<Meal[]>([]);
   const [loading, setLoading] = useState(true);
   const [newItem, setNewItem] = useState('');
   const [newKind, setNewKind] = useState<'defrost' | 'prep'>('defrost');
+  const [tmrItem, setTmrItem] = useState('');
+  const [tmrKind, setTmrKind] = useState<'defrost' | 'prep'>('defrost');
   const [toast, setToast] = useState<string | null>(null);
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 1800); }
@@ -27,11 +30,13 @@ export default function TodayPage() {
   const load = useCallback(async () => {
     if (!supabaseReady || !user) { setLoading(false); return; }
     setLoading(true);
-    const [preps, meals] = await Promise.all([
+    const [preps, tmrPreps, meals] = await Promise.all([
       getPreps(user.username, today),
+      getPreps(user.username, tomorrow),
       getMealsBetween(user.username, tomorrow, tomorrow),
     ]);
     setTodayPreps(preps);
+    setTomorrowPreps(tmrPreps);
     setTomorrowMeals(meals);
     setLoading(false);
   }, [today, tomorrow, user]);
@@ -49,11 +54,23 @@ export default function TodayPage() {
     ping('已添加 ✓');
   }
 
+  async function onAddTomorrow() {
+    if (!tmrItem.trim()) return;
+    await addPrep({ owner: user!.username, prep_date: tomorrow, item: tmrItem.trim(), kind: tmrKind });
+    setTmrItem('');
+    await load();
+    ping('已添加到明天 ✓');
+  }
+
   const pending = todayPreps.filter((p) => !p.done);
+  const tmrPending = tomorrowPreps.filter((p) => !p.done);
+  const tomorrowShopping = tomorrowMeals.flatMap((m) =>
+    (m.ingredients || []).map((ing) => ({ ...ing, mealType: m.meal_type }))
+  );
 
   return (
     <div>
-      <SectionTitle sub="今天该处理的 + 明天要吃的">今明提醒</SectionTitle>
+      <SectionTitle sub="今天 / 明天该处理的 + 明天要吃的与采购">今明提醒</SectionTitle>
       <ConfigBanner />
 
       {!supabaseReady ? null : loading ? <Spinner label="加载中…" /> : (
@@ -104,6 +121,50 @@ export default function TodayPage() {
           </section>
 
           <section className="card p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold">明天要处理的 <span className="text-xs font-normal" style={{ color: 'var(--ink-soft)' }}>{ymdLabel(tomorrow)}</span></h3>
+              {tmrPending.length > 0 && (
+                <span className="rounded-full px-2.5 py-0.5 text-xs text-white" style={{ background: 'var(--warn)' }}>
+                  还剩 {tmrPending.length} 项
+                </span>
+              )}
+            </div>
+            {tomorrowPreps.length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>明天暂时没有需要处理的（AI 生成菜谱时会自动填入）</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {tomorrowPreps.map((p) => (
+                  <li key={p.id} className="flex items-center gap-3">
+                    <button onClick={() => onToggle(p)}
+                      className="flex flex-1 items-center gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-black/[0.02]">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-md border text-xs"
+                        style={{
+                          borderColor: p.done ? 'var(--accent-2)' : 'var(--line)',
+                          background: p.done ? 'var(--accent-2)' : 'transparent', color: '#fff',
+                        }}>{p.done ? '✓' : ''}</span>
+                      <span className="text-base">{p.kind === 'defrost' ? '🧊' : '🔪'}</span>
+                      <span className="flex-1 text-sm" style={{
+                        color: p.done ? 'var(--ink-soft)' : 'var(--ink)',
+                        textDecoration: p.done ? 'line-through' : 'none',
+                      }}>{p.item}</span>
+                    </button>
+                    <button onClick={() => onDelete(p)} className="text-xs" style={{ color: 'var(--ink-soft)' }}>删</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setTmrKind(tmrKind === 'defrost' ? 'prep' : 'defrost')}
+                className="chip px-3 py-2 text-sm">{tmrKind === 'defrost' ? '🧊 解冻' : '🔪 预处理'}</button>
+              <input value={tmrItem} onChange={(e) => setTmrItem(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && onAddTomorrow()}
+                placeholder="手动加一项到明天"
+                className="flex-1 rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              <Button onClick={onAddTomorrow}>加</Button>
+            </div>
+          </section>
+
+          <section className="card p-4">
             <h3 className="mb-3 font-semibold">明天吃什么 <span className="text-xs font-normal" style={{ color: 'var(--ink-soft)' }}>{ymdLabel(tomorrow)}</span></h3>
             <div className="space-y-2">
               {MEAL_TYPES.map((t) => {
@@ -118,6 +179,28 @@ export default function TodayPage() {
                 );
               })}
             </div>
+          </section>
+
+          <section className="card p-4">
+            <h3 className="mb-3 font-semibold">明天要买的食材 <span className="text-xs font-normal" style={{ color: 'var(--ink-soft)' }}>三餐汇总</span></h3>
+            {tomorrowShopping.length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>明天的菜还没生成采购清单（点开某一餐让 AI 分析后会出现）</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {tomorrowShopping.map((ing) => (
+                  <li key={ing.id} className="flex items-center justify-between rounded-xl px-2 py-1.5"
+                    style={{ background: 'var(--surface-2)' }}>
+                    <span className="flex items-center gap-2 text-sm">
+                      <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: 'var(--surface)', color: 'var(--ink-soft)' }}>
+                        {MEAL_LABELS[ing.mealType]}
+                      </span>
+                      {ing.name}
+                    </span>
+                    <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{ing.amount}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         </div>
       )}

@@ -17,6 +17,8 @@ export interface Prefs {
   health: string;           // 健康描述
   redMeatMaxMeals: number;  // 每周红肉最多几顿
   redMeatMaxGrams: number;  // 每周红肉最多多少克
+  peopleCount: number;      // 几人吃饭（影响份量）
+  fullness: number;         // 吃几分饱（1-10，影响总量）
 }
 
 export interface Settings {
@@ -58,6 +60,8 @@ export const DEFAULT_PREFS: Prefs = {
   health: '高血脂，需要清淡健康饮食，低盐低糖低脂',
   redMeatMaxMeals: 2,
   redMeatMaxGrams: 100,
+  peopleCount: 2,
+  fullness: 8,
 };
 
 export interface Meal {
@@ -68,6 +72,7 @@ export interface Meal {
   title: string;
   recipe: string;
   health_note: string;      // AI 给的健康说明（结合健康状况）
+  health_conflict?: boolean; // 这道菜是否与健康状况相背离（用警示色提醒）
   author: string;
   ingredients?: Ingredient[];
   preps?: Prep[];

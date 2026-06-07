@@ -1,9 +1,10 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { upsertMeal, getUserPrefs } from '@/lib/db';
+import { upsertMeal, getUserPrefs, replaceIngredients, addPrep, deletePrepsForMeal } from '@/lib/db';
 import type { MealType } from '@/lib/types';
-import { startOfWeek, weekDates, ymdLabel, WEEK_LABELS, addDays } from '@/lib/date';
+import { MEAL_TYPES, MEAL_LABELS } from '@/lib/types';
+import { startOfWeek, weekDates, ymdLabel, WEEK_LABELS, addDays, todayYMD, parseYMD, toYMD } from '@/lib/date';
 import { Button, SectionTitle, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
@@ -36,6 +37,59 @@ export default function DiscoverPage() {
   const [fridge, setFridge] = useState('');
   const [fridgeLoading, setFridgeLoading] = useState(false);
   const [dishes, setDishes] = useState<DishRec[] | null>(null);
+  // 把推荐菜加入某天某餐
+  const [addSel, setAddSel] = useState<Record<number, { date: string; type: MealType }>>({});
+  const [addingIdx, setAddingIdx] = useState<number | null>(null);
+
+  // 未来 7 天可选日期（今天起）
+  const dayOptions = Array.from({ length: 7 }, (_, i) => toYMD(addDays(parseYMD(todayYMD()), i)));
+
+  function selFor(i: number) {
+    return addSel[i] || { date: dayOptions[0], type: 'dinner' as MealType };
+  }
+  function setSel(i: number, patch: Partial<{ date: string; type: MealType }>) {
+    setAddSel((prev) => ({ ...prev, [i]: { ...selFor(i), ...patch } }));
+  }
+
+  // 用现有食材做这道菜并覆盖到选定的那一餐
+  async function addDishToMeal(i: number, dish: DishRec) {
+    const sel = selFor(i);
+    setAddingIdx(i);
+    try {
+      const resp = await fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task: 'dish-from-given', dish: dish.title, available: fridge.trim(),
+          mealLabel: MEAL_LABELS[sel.type], username: user?.username,
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) { ping(json.error || '生成失败'); return; }
+      const r = json.result;
+      // 覆盖那一餐
+      const saved = await upsertMeal({
+        owner: user!.username, date: sel.date, meal_type: sel.type,
+        title: dish.title, recipe: r.recipe || '', health_note: r.health_note || '', author: 'AI',
+      });
+      if (Array.isArray(r.ingredients)) {
+        await replaceIngredients(saved.id, r.ingredients.map((x: any) => ({ name: x.name || '', amount: x.amount || '' })));
+      }
+      // 覆盖那一餐：先清旧预处理，保持同步
+      await deletePrepsForMeal(saved.id);
+      if (Array.isArray(r.preps) && r.preps.length) {
+        const prepDate = toYMD(addDays(parseYMD(sel.date), -1));
+        for (const pp of r.preps) {
+          await addPrep({
+            owner: user!.username, meal_id: saved.id, prep_date: prepDate,
+            item: pp.item || '', kind: pp.kind === 'defrost' ? 'defrost' : 'prep',
+          });
+        }
+      }
+      ping(`已加入 ${ymdLabel(sel.date)} ${MEAL_LABELS[sel.type]} ✓`);
+    } catch (e: any) {
+      ping('出错：' + (e?.message || ''));
+    } finally { setAddingIdx(null); }
+  }
 
   function weekStartFor(target: 0 | 1): Date {
     const base = startOfWeek(new Date());
@@ -182,20 +236,43 @@ export default function DiscoverPage() {
 
           {dishes && (
             <div className="space-y-2">
-              {dishes.map((d, i) => (
+              {dishes.map((d, i) => {
+                const sel = selFor(i);
+                return (
                 <div key={i} className="card p-4">
                   <h4 className="mb-1 font-semibold">{d.title}</h4>
                   <p className="mb-2 text-sm" style={{ color: 'var(--ink-soft)' }}>{d.reason}</p>
                   {d.missing && d.missing.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="mb-3 flex flex-wrap items-center gap-1.5">
                       <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>还需补买：</span>
                       {d.missing.map((m, j) => (
                         <span key={j} className="chip px-2.5 py-0.5 text-xs">{m}</span>
                       ))}
                     </div>
                   )}
+                  <div className="mt-2 border-t pt-3" style={{ borderColor: 'var(--line)' }}>
+                    <p className="mb-2 text-xs" style={{ color: 'var(--ink-soft)' }}>加入到哪一餐（会覆盖那一餐，只用你现有的食材按人数做够）</p>
+                    <div className="flex gap-2">
+                      <select value={sel.date} onChange={(e) => setSel(i, { date: e.target.value })}
+                        className="flex-1 rounded-xl border bg-white px-2 py-2 text-sm" style={{ borderColor: 'var(--line)' }}>
+                        {dayOptions.map((dt, k) => (
+                          <option key={dt} value={dt}>{k === 0 ? '今天' : k === 1 ? '明天' : ymdLabel(dt)}</option>
+                        ))}
+                      </select>
+                      <select value={sel.type} onChange={(e) => setSel(i, { type: e.target.value as MealType })}
+                        className="rounded-xl border bg-white px-2 py-2 text-sm" style={{ borderColor: 'var(--line)' }}>
+                        {MEAL_TYPES.map((t) => (
+                          <option key={t} value={t}>{MEAL_LABELS[t]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <Button onClick={() => addDishToMeal(i, d)} disabled={addingIdx !== null} className="mt-2 w-full">
+                      {addingIdx === i ? <Spinner label="生成并写入中…" /> : '用现有食材做这道并加入'}
+                    </Button>
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
