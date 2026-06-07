@@ -68,12 +68,15 @@ function MealEditor() {
       }
       // 替换/重新分析这一餐前，先清掉旧的预处理提醒，保持同步
       await deletePrepsForMeal(saved.id);
-      // 预处理默认放到「前一天」提醒
+      // 预处理：按 AI 给的 when 决定哪天处理（same=当天 / prev=前一晚），time 用于排序
       if (Array.isArray(r.preps) && r.preps.length) {
-        const prepDate = toYMD(addDays(parseYMD(date), -1));
         for (const p of r.preps) {
+          const prepDate = p.when === 'prev'
+            ? toYMD(addDays(parseYMD(date), -1))
+            : date;
           await addPrep({
             owner: user!.username, meal_id: saved.id, prep_date: prepDate,
+            prep_time: typeof p.time === 'string' ? p.time : null,
             item: p.item || '', kind: p.kind === 'defrost' ? 'defrost' : 'prep',
           });
         }

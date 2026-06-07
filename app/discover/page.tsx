@@ -78,10 +78,13 @@ export default function DiscoverPage() {
       // 覆盖那一餐：先清旧预处理，保持同步
       await deletePrepsForMeal(saved.id);
       if (Array.isArray(r.preps) && r.preps.length) {
-        const prepDate = toYMD(addDays(parseYMD(sel.date), -1));
         for (const pp of r.preps) {
+          const prepDate = pp.when === 'prev'
+            ? toYMD(addDays(parseYMD(sel.date), -1))
+            : sel.date;
           await addPrep({
             owner: user!.username, meal_id: saved.id, prep_date: prepDate,
+            prep_time: typeof pp.time === 'string' ? pp.time : null,
             item: pp.item || '', kind: pp.kind === 'defrost' ? 'defrost' : 'prep',
           });
         }

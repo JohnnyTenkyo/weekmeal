@@ -41,7 +41,8 @@ export interface Ingredient {
 export interface Prep {
   id: string;
   meal_id: string | null;
-  prep_date: string;        // YYYY-MM-DD
+  prep_date: string;        // YYYY-MM-DD（需要动手处理的那天）
+  prep_time?: string;       // HH:MM 建议开始处理的时间，用于排序
   item: string;
   kind: 'defrost' | 'prep';
   done: boolean;

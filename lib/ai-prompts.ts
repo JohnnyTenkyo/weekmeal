@@ -19,6 +19,13 @@ export function portionConstraint(p: Prefs): string {
 const QUANTIFY_RULE =
   '【用量必须量化】每一样食材和调料都要给出精确克数/毫升/个数，并在括号里补一个通俗说法，方便不用秤也能下厨，例如「生抽 15 克（约一汤勺）」「盐 3 克（约半茶匙）」「五花肉 250 克（约半斤）」「油 10 克（约一勺）」。常见换算参考：一茶匙≈5克、一汤勺/一勺≈15克、一斤=500克、半斤=250克。做法步骤里凡涉及调味也要写清用量。';
 
+// 预处理时间推断规则
+const PREP_RULE =
+  '【预处理与时间】生肉、生鱼、海鲜、冷冻食材默认都放在冰箱（冷冻或冷藏），需要提前解冻/腔制/泡发的要列入 preps。吃饭时间默认：早餐 7:30、午餐 12:30、晚餐 18:30。请据此【反推】每项预处理建议几点开始，给出 when 和 time 两个字段：' +
+  '- when：填 "same"（吃饭当天处理，如当天早上解冻、提前几小时腔制）或 "prev"（必须前一晚处理，如大块肉解冻一夜、干货泡发过夜、需腔制过夜入味）。' +
+  '- time：建议开始处理的时间，24小时制 HH:MM。例如午餐有鱼要解冻+腔制，鱼当天早上解冻即可，可给 when="same"、time="08:00"；若是大块牛腩这类解冻慢的，给 when="prev"、time="21:00"。' +
+  '判断要符合常理：解冻小块鱼/虾 2-3 小时、解冻大块肉需一夜；腔制 30 分钟到几小时按菜定；泡发干货通常要过夜。';
+
 // 把口味/健康偏好拼成系统约束，喂给所有 AI 调用
 export function prefsToConstraints(p: Prefs): string {
   const lines: string[] = [];
@@ -60,6 +67,7 @@ export function recipePrompt(dish: string, prefs: Prefs, mealLabel?: string, ext
 ${constraints}
 ${guide}
 ${QUANTIFY_RULE}
+${PREP_RULE}
 
 【健康冲突检测】这道菜是用户自己点的，可能并不适合他的健康状况。请认真判断：如果这道菜与用户的健康状况明显相背离（例如高血脂/高血压的人吃红烧肉、肥肉、油炸、动物内脏、高盐高糖等），你必须在 health_note 里【明确地、严肃地】警示，说清楚为什么不建议吃、有什么风险，并给出更健康的替代或改良做法。这种情况把 conflict 设为 true。如果这道菜是健康安全的，conflict 设为 false，health_note 正常说明好处即可。
 
@@ -71,9 +79,9 @@ ${QUANTIFY_RULE}
   "health_note": "结合用户健康状况说明；若与健康相背离则严肃警示风险并给改良建议",
   "conflict": false,
   "ingredients": [{"name":"食材名","amount":"精确克数+通俗说法，如 250克（约半斤）"}],
-  "preps": [{"item":"前一天需要解冻或预处理的事项","kind":"defrost或prep"}]
+  "preps": [{"item":"要做的事，如：解冻鲈鱼/腌制鸡肉/泡发干货","kind":"defrost或prep","when":"same或prev","time":"HH:MM"}]
 }
-preps 里只放真正需要提前一天准备的（比如解冻肉类、泡发干货、腌制），没有就给空数组。`,
+preps 里放所有需要提前处理的事项（解冻、腌制、泡发等），并按上面的规则给出 when 和 time；完全不需要预处理才给空数组。`,
   };
 }
 
@@ -104,6 +112,7 @@ export function dishFromGivenPrompt(dish: string, available: string, prefs: Pref
 ${constraints}
 ${guide}
 ${QUANTIFY_RULE}
+${PREP_RULE}
 
 【只用现有食材】用户只想用家里现有的原材料做这道菜。ingredients 里【只能】包含用户提供的这些原材料（可以只用其中一部分），绝对不要引入用户没有的新原材料；唯一例外是水、盐、生抽、油这类最基本的厨房调味料可以少量使用。即便份量要满足人数，也只能在现有食材范围内调配。
 
@@ -114,9 +123,9 @@ ${QUANTIFY_RULE}
   "recipe": "分步骤做法，用换行分隔，调味用量要量化（克数+通俗说法）",
   "health_note": "结合用户健康状况，说明这道菜对身体的好处或注意点，2-3 句",
   "ingredients": [{"name":"食材名（必须来自我提供的列表）","amount":"精确克数+通俗说法"}],
-  "preps": [{"item":"前一天需要解冻或预处理的事项","kind":"defrost或prep"}]
+  "preps": [{"item":"要做的事","kind":"defrost或prep","when":"same或prev","time":"HH:MM"}]
 }
-preps 没有就给空数组。`,
+preps 按上面规则给出 when 和 time；不需要预处理才给空数组。`,
   };
 }
 

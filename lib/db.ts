@@ -86,16 +86,18 @@ export async function getPreps(owner: string, date: string): Promise<Prep[]> {
     .select('*')
     .eq('owner', owner)
     .eq('prep_date', date)
+    .order('prep_time', { ascending: true, nullsFirst: false })
     .order('created_at');
   if (error) { console.error(error); return []; }
   return (data || []) as Prep[];
 }
 
 export async function addPrep(p: {
-  owner: string; meal_id?: string | null; prep_date: string; item: string; kind: 'defrost' | 'prep';
+  owner: string; meal_id?: string | null; prep_date: string; prep_time?: string | null; item: string; kind: 'defrost' | 'prep';
 }): Promise<void> {
   const { error } = await supabase.from('preps').insert({
-    owner: p.owner, meal_id: p.meal_id ?? null, prep_date: p.prep_date, item: p.item, kind: p.kind, done: false,
+    owner: p.owner, meal_id: p.meal_id ?? null, prep_date: p.prep_date,
+    prep_time: p.prep_time ?? null, item: p.item, kind: p.kind, done: false,
   });
   if (error) throw error;
 }
