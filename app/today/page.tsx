@@ -8,8 +8,10 @@ import { todayYMD, toYMD, addDays, parseYMD, ymdLabel } from '@/lib/date';
 import { Button, SectionTitle, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function TodayPage() {
+  const { user } = useAuth();
   const today = todayYMD();
   const tomorrow = toYMD(addDays(parseYMD(today), 1));
 
@@ -23,16 +25,16 @@ export default function TodayPage() {
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 1800); }
 
   const load = useCallback(async () => {
-    if (!supabaseReady) { setLoading(false); return; }
+    if (!supabaseReady || !user) { setLoading(false); return; }
     setLoading(true);
     const [preps, meals] = await Promise.all([
-      getPreps(today),
-      getMealsBetween(tomorrow, tomorrow),
+      getPreps(user.username, today),
+      getMealsBetween(user.username, tomorrow, tomorrow),
     ]);
     setTodayPreps(preps);
     setTomorrowMeals(meals);
     setLoading(false);
-  }, [today, tomorrow]);
+  }, [today, tomorrow, user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -41,7 +43,7 @@ export default function TodayPage() {
 
   async function onAdd() {
     if (!newItem.trim()) return;
-    await addPrep({ prep_date: today, item: newItem.trim(), kind: newKind });
+    await addPrep({ owner: user!.username, prep_date: today, item: newItem.trim(), kind: newKind });
     setNewItem('');
     await load();
     ping('已添加 ✓');

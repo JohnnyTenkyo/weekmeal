@@ -68,7 +68,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '无法读取设置，请确认数据库已初始化。' }, { status: 400 });
     }
     const { ai_api_key, ai_base_url, ai_model } = settings;
-    const prefs = settings.prefs as Prefs;
+    // 健康/口味偏好：优先读当前登录用户的（每个账号独立），否则回退到全局 settings.prefs
+    let prefs = settings.prefs as Prefs;
+    if (body.username) {
+      const { data: u } = await sb.from('users').select('prefs').eq('username', body.username).maybeSingle();
+      if (u && u.prefs) prefs = { ...prefs, ...(u.prefs as Prefs) };
+    }
     if (!ai_api_key) {
       return NextResponse.json({ error: '尚未在「设置」里填写 AI API Key。' }, { status: 400 });
     }

@@ -50,8 +50,19 @@ export interface User {
   display_name: string;
 }
 
+// 用户独立的健康/口味偏好（存 users 表）
+export const DEFAULT_PREFS: Prefs = {
+  cuisine: '广式',
+  spicy: false,
+  avoid: ['菌菇'],
+  health: '高血脂，需要清淡健康饮食，低盐低糖低脂',
+  redMeatMaxMeals: 2,
+  redMeatMaxGrams: 100,
+};
+
 export interface Meal {
   id: string;
+  owner: string;            // 归属账号 username
   date: string;             // YYYY-MM-DD
   meal_type: MealType;
   title: string;

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { getSettings, saveSettings, changePassword } from '@/lib/db';
+import { getSettings, saveSettings, changePassword, getUserPrefs, saveUserPrefs } from '@/lib/db';
 import type { Settings, Prefs } from '@/lib/types';
 import { Button, SectionTitle, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
@@ -22,8 +22,18 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!supabaseReady) { setLoading(false); return; }
-    getSettings().then((d) => { setS(d); setLoading(false); });
-  }, []);
+    (async () => {
+      const d = await getSettings();
+      if (d && auth.user) {
+        // 健康/口味偏好读当前用户的（每个账号独立）
+        const userPrefs = await getUserPrefs(auth.user.username);
+        setS({ ...d, prefs: userPrefs });
+      } else {
+        setS(d);
+      }
+      setLoading(false);
+    })();
+  }, [auth.user]);
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 1800); }
 
@@ -50,9 +60,12 @@ export default function SettingsPage() {
     if (!s) return;
     setSaving(true);
     try {
+      // AI 配置（key/url/model）全局共享，所有家人共用一套
       await saveSettings({
-        ai_api_key: s.ai_api_key, ai_base_url: s.ai_base_url, ai_model: s.ai_model, prefs: s.prefs,
+        ai_api_key: s.ai_api_key, ai_base_url: s.ai_base_url, ai_model: s.ai_model,
       });
+      // 健康/口味偏好按账号独立保存
+      if (auth.user) await saveUserPrefs(auth.user.username, s.prefs);
       ping('已保存 ✓');
     } catch (e: any) {
       ping('保存失败：' + (e?.message || ''));

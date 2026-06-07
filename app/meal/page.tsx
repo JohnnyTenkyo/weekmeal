@@ -11,8 +11,10 @@ import { ymdLabel, addDays, parseYMD, toYMD, startOfWeek, weekDates } from '@/li
 import { Button, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
+import { useAuth } from '@/components/AuthProvider';
 
 function MealEditor() {
+  const { user } = useAuth();
   const sp = useSearchParams();
   const router = useRouter();
   const date = sp.get('date') || '';
@@ -31,14 +33,14 @@ function MealEditor() {
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
 
   const load = useCallback(async () => {
-    if (!supabaseReady || !date) { setLoading(false); return; }
+    if (!supabaseReady || !date || !user) { setLoading(false); return; }
     setLoading(true);
-    const m = await getMeal(date, type);
+    const m = await getMeal(user.username, date, type);
     setMeal(m);
     setTitle(m?.title || '');
     setAuthor(m?.author || '');
     setLoading(false);
-  }, [date, type]);
+  }, [date, type, user]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -47,7 +49,7 @@ function MealEditor() {
     setAiLoading(true);
     try {
       // 1) 先保存这一餐
-      const saved = await upsertMeal({ date, meal_type: type, title: title.trim(), author });
+      const saved = await upsertMeal({ owner: user!.username, date, meal_type: type, title: title.trim(), author });
       // 2) 调 AI 分析做法 + 原材料 + 预处理
       const resp = await fetch('/api/ai', {
         method: 'POST',
@@ -58,7 +60,7 @@ function MealEditor() {
       if (!resp.ok) { ping(json.error || 'AI 调用失败'); await load(); return; }
 
       const r = json.result;
-      await upsertMeal({ date, meal_type: type, title: title.trim(), recipe: r.recipe || '', health_note: r.health_note || '', author });
+      await upsertMeal({ owner: user!.username, date, meal_type: type, title: title.trim(), recipe: r.recipe || '', health_note: r.health_note || '', author });
       if (Array.isArray(r.ingredients)) {
         await replaceIngredients(saved.id, r.ingredients.map((i: any) => ({
           name: i.name || '', amount: i.amount || '',
@@ -69,7 +71,7 @@ function MealEditor() {
         const prepDate = toYMD(addDays(parseYMD(date), -1));
         for (const p of r.preps) {
           await addPrep({
-            meal_id: saved.id, prep_date: prepDate,
+            owner: user!.username, meal_id: saved.id, prep_date: prepDate,
             item: p.item || '', kind: p.kind === 'defrost' ? 'defrost' : 'prep',
           });
         }
@@ -83,7 +85,7 @@ function MealEditor() {
 
   async function handleSaveOnly() {
     if (!title.trim()) { ping('先写下菜名'); return; }
-    await upsertMeal({ date, meal_type: type, title: title.trim(), recipe: meal?.recipe || '', author });
+    await upsertMeal({ owner: user!.username, date, meal_type: type, title: title.trim(), recipe: meal?.recipe || '', author });
     await load();
     ping('已保存 ✓');
   }
@@ -95,7 +97,7 @@ function MealEditor() {
       // 收集本周所有已安排的菜名（排除当前这一餐）
       const ws = startOfWeek(parseYMD(date));
       const wdates = weekDates(ws);
-      const weekMeals = await getMealsBetween(wdates[0], wdates[6]);
+      const weekMeals = await getMealsBetween(user!.username, wdates[0], wdates[6]);
       const existing = weekMeals
         .filter((m) => !(m.date === date && m.meal_type === type))
         .map((m) => m.title)

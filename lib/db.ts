@@ -17,10 +17,11 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
 }
 
 // ---------------- Meals ----------------
-export async function getMealsBetween(startYMD: string, endYMD: string): Promise<Meal[]> {
+export async function getMealsBetween(owner: string, startYMD: string, endYMD: string): Promise<Meal[]> {
   const { data, error } = await supabase
     .from('meals')
     .select('*, ingredients(*), preps(*)')
+    .eq('owner', owner)
     .gte('date', startYMD)
     .lte('date', endYMD)
     .order('date');
@@ -28,10 +29,11 @@ export async function getMealsBetween(startYMD: string, endYMD: string): Promise
   return (data || []) as Meal[];
 }
 
-export async function getMeal(date: string, mealType: MealType): Promise<Meal | null> {
+export async function getMeal(owner: string, date: string, mealType: MealType): Promise<Meal | null> {
   const { data, error } = await supabase
     .from('meals')
     .select('*, ingredients(*), preps(*)')
+    .eq('owner', owner)
     .eq('date', date)
     .eq('meal_type', mealType)
     .maybeSingle();
@@ -41,13 +43,13 @@ export async function getMeal(date: string, mealType: MealType): Promise<Meal | 
 
 // 创建或更新某餐（按 date+meal_type 唯一）
 export async function upsertMeal(m: {
-  date: string; meal_type: MealType; title: string; recipe?: string; author?: string; health_note?: string;
+  owner: string; date: string; meal_type: MealType; title: string; recipe?: string; author?: string; health_note?: string;
 }): Promise<Meal> {
-  const row: any = { date: m.date, meal_type: m.meal_type, title: m.title, recipe: m.recipe ?? '', author: m.author ?? '' };
+  const row: any = { owner: m.owner, date: m.date, meal_type: m.meal_type, title: m.title, recipe: m.recipe ?? '', author: m.author ?? '' };
   if (m.health_note !== undefined) row.health_note = m.health_note;
   const { data, error } = await supabase
     .from('meals')
-    .upsert(row, { onConflict: 'date,meal_type' })
+    .upsert(row, { onConflict: 'owner,date,meal_type' })
     .select('*')
     .single();
   if (error) throw error;
@@ -77,10 +79,11 @@ export async function toggleIngredient(id: string, bought: boolean): Promise<voi
 }
 
 // ---------------- Preps ----------------
-export async function getPreps(date: string): Promise<Prep[]> {
+export async function getPreps(owner: string, date: string): Promise<Prep[]> {
   const { data, error } = await supabase
     .from('preps')
     .select('*')
+    .eq('owner', owner)
     .eq('prep_date', date)
     .order('created_at');
   if (error) { console.error(error); return []; }
@@ -88,10 +91,10 @@ export async function getPreps(date: string): Promise<Prep[]> {
 }
 
 export async function addPrep(p: {
-  meal_id?: string | null; prep_date: string; item: string; kind: 'defrost' | 'prep';
+  owner: string; meal_id?: string | null; prep_date: string; item: string; kind: 'defrost' | 'prep';
 }): Promise<void> {
   const { error } = await supabase.from('preps').insert({
-    meal_id: p.meal_id ?? null, prep_date: p.prep_date, item: p.item, kind: p.kind, done: false,
+    owner: p.owner, meal_id: p.meal_id ?? null, prep_date: p.prep_date, item: p.item, kind: p.kind, done: false,
   });
   if (error) throw error;
 }
@@ -161,12 +164,29 @@ export async function hasAnyUser(): Promise<boolean> {
   return (count || 0) > 0;
 }
 
-// ---------------- 数据保留：清理 2 周前的菜 ----------------
-export async function cleanupOldMeals(): Promise<void> {
+// ---------------- 数据保留：清理某账号 2 周前的菜 ----------------
+export async function cleanupOldMeals(owner: string): Promise<void> {
   try {
-    await supabase.rpc('cleanup_old_meals');
+    await supabase.rpc('cleanup_old_meals_for', { p_owner: owner });
   } catch (e) {
     // RPC 不存在时静默跳过（未跑 migration），不影响主流程
-    console.warn('cleanup_old_meals 调用失败（可忽略）', e);
+    console.warn('cleanup_old_meals_for 调用失败（可忽略）', e);
   }
+}
+
+// ---------------- 每个用户独立的健康/口味偏好 ----------------
+import type { Prefs } from './types';
+import { DEFAULT_PREFS } from './types';
+
+export async function getUserPrefs(username: string): Promise<Prefs> {
+  const { data, error } = await supabase
+    .from('users').select('prefs').eq('username', username).maybeSingle();
+  if (error || !data || !data.prefs) return { ...DEFAULT_PREFS };
+  return { ...DEFAULT_PREFS, ...(data.prefs as Prefs) };
+}
+
+export async function saveUserPrefs(username: string, prefs: Prefs): Promise<void> {
+  const { error } = await supabase
+    .from('users').update({ prefs }).eq('username', username);
+  if (error) throw error;
 }

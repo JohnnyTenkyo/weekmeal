@@ -1,25 +1,35 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { upsertMeal } from '@/lib/db';
+import { upsertMeal, getUserPrefs } from '@/lib/db';
 import type { MealType } from '@/lib/types';
-import { startOfWeek, weekDates, ymdLabel, WEEK_LABELS } from '@/lib/date';
+import { startOfWeek, weekDates, ymdLabel, WEEK_LABELS, addDays } from '@/lib/date';
 import { Button, SectionTitle, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
+import { useAuth } from '@/components/AuthProvider';
+import type { Prefs } from '@/lib/types';
 
 interface DayPlan { date: string; breakfast: string; lunch: string; dinner: string; }
 interface DishRec { title: string; reason: string; missing: string[]; }
 
 export default function DiscoverPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [tab, setTab] = useState<'week' | 'fridge'>('week');
+  const [prefs, setPrefsState] = useState<Prefs | null>(null);
+
+  useEffect(() => {
+    if (!supabaseReady || !user) return;
+    getUserPrefs(user.username).then(setPrefsState);
+  }, [user]);
   const [toast, setToast] = useState<string | null>(null);
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
 
-  // 一周计划
-  const [planLoading, setPlanLoading] = useState(false);
+  // 一周计划：分本周(0)/下周(1)
+  const [planLoading, setPlanLoading] = useState<0 | 1 | null>(null);
   const [plan, setPlan] = useState<DayPlan[] | null>(null);
+  const [planTarget, setPlanTarget] = useState<0 | 1>(0); // 当前生成的是本周还是下周
   const [saving, setSaving] = useState(false);
 
   // 冰箱反推
@@ -27,20 +37,24 @@ export default function DiscoverPage() {
   const [fridgeLoading, setFridgeLoading] = useState(false);
   const [dishes, setDishes] = useState<DishRec[] | null>(null);
 
-  async function genWeek() {
-    setPlanLoading(true); setPlan(null);
+  function weekStartFor(target: 0 | 1): Date {
+    const base = startOfWeek(new Date());
+    return target === 1 ? startOfWeek(addDays(base, 7)) : base;
+  }
+
+  async function genWeek(target: 0 | 1) {
+    setPlanLoading(target); setPlan(null); setPlanTarget(target);
     try {
-      const ws = startOfWeek(new Date());
-      const dates = weekDates(ws);
+      const dates = weekDates(weekStartFor(target));
       const resp = await fetch('/api/ai', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'weekplan', weekDates: dates }),
+        body: JSON.stringify({ task: 'weekplan', weekDates: dates, username: user?.username }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || '生成失败'); return; }
       setPlan(json.result.days as DayPlan[]);
     } catch (e: any) { ping('出错：' + (e?.message || '')); }
-    finally { setPlanLoading(false); }
+    finally { setPlanLoading(null); }
   }
 
   async function applyWeek() {
@@ -53,11 +67,11 @@ export default function DiscoverPage() {
         ];
         for (const [type, title] of entries) {
           if (title && title.trim()) {
-            await upsertMeal({ date: d.date, meal_type: type, title: title.trim(), author: 'AI' });
+            await upsertMeal({ owner: user!.username, date: d.date, meal_type: type, title: title.trim(), author: 'AI' });
           }
         }
       }
-      ping('已写入本周菜单 ✓');
+      ping(planTarget === 1 ? '已写入下周菜单 ✓' : '已写入本周菜单 ✓');
       setTimeout(() => router.push('/'), 800);
     } catch (e: any) { ping('写入失败：' + (e?.message || '')); }
     finally { setSaving(false); }
@@ -69,7 +83,7 @@ export default function DiscoverPage() {
     try {
       const resp = await fetch('/api/ai', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'from-ingredients', ingredients: fridge.trim() }),
+        body: JSON.stringify({ task: 'from-ingredients', ingredients: fridge.trim(), username: user?.username }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || '推荐失败'); return; }
@@ -103,16 +117,34 @@ export default function DiscoverPage() {
       {!supabaseReady ? null : tab === 'week' ? (
         <div className="space-y-4">
           <div className="card p-4">
-            <p className="mb-3 text-sm" style={{ color: 'var(--ink-soft)' }}>
-              按你的健康偏好（低盐低糖低脂、红肉每周限量、广式清淡、不辣无忌口）生成本周三餐。
-            </p>
-            <Button onClick={genWeek} disabled={planLoading} className="w-full">
-              {planLoading ? <Spinner label="AI 规划中…" /> : '✨ 生成本周三餐'}
-            </Button>
+            <p className="mb-1 text-sm" style={{ color: 'var(--ink-soft)' }}>按你保存的健康偏好生成三餐：</p>
+            <ul className="mb-3 space-y-0.5 text-xs" style={{ color: 'var(--ink-soft)' }}>
+              {prefs ? (
+                <>
+                  <li>· 口味：{prefs.cuisine || '不限'}{prefs.spicy ? '、可吃辣' : '、不吃辣'}</li>
+                  {prefs.avoid && prefs.avoid.length > 0 && <li>· 忌口：{prefs.avoid.join('、')}</li>}
+                  {prefs.health && <li>· 健康：{prefs.health}</li>}
+                  <li>· 红肉：每周最多 {prefs.redMeatMaxMeals} 顿 / {prefs.redMeatMaxGrams} 克</li>
+                </>
+              ) : (
+                <li>· 读取偏好中…（可在「设置」里修改）</li>
+              )}
+            </ul>
+            <div className="flex gap-2">
+              <Button onClick={() => genWeek(0)} disabled={planLoading !== null} className="flex-1">
+                {planLoading === 0 ? <Spinner label="规划中…" /> : '✨ 生成本周三餐'}
+              </Button>
+              <Button onClick={() => genWeek(1)} disabled={planLoading !== null} variant="soft" className="flex-1">
+                {planLoading === 1 ? <Spinner label="规划中…" /> : '✨ 生成下周三餐'}
+              </Button>
+            </div>
           </div>
 
           {plan && (
             <>
+              <p className="text-center text-sm font-medium" style={{ color: 'var(--accent)' }}>
+                {planTarget === 1 ? '下周三餐方案' : '本周三餐方案'}
+              </p>
               <div className="space-y-2">
                 {plan.map((d, i) => (
                   <div key={d.date} className="card p-3">
@@ -128,7 +160,7 @@ export default function DiscoverPage() {
                 ))}
               </div>
               <Button onClick={applyWeek} disabled={saving} className="w-full">
-                {saving ? '写入中…' : '采用并写入本周菜单'}
+                {saving ? '写入中…' : (planTarget === 1 ? '采用并写入下周菜单' : '采用并写入本周菜单')}
               </Button>
               <p className="text-center text-xs" style={{ color: 'var(--ink-soft)' }}>
                 写入后可在「本周」点开每一餐，再让 AI 出做法和采购清单

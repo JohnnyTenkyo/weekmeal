@@ -8,8 +8,10 @@ import { startOfWeek, weekDates, addDays, toYMD, WEEK_LABELS, ymdLabel, todayYMD
 import { SectionTitle, Spinner } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
 import { supabaseReady } from '@/lib/supabase';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function WeekPage() {
+  const { user } = useAuth();
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
   const [meals, setMeals] = useState<Meal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,20 +21,22 @@ export default function WeekPage() {
 
   const load = useCallback(async () => {
     if (!supabaseReady) { setLoading(false); return; }
+    if (!user) { setLoading(false); return; }
     setLoading(true);
-    const data = await getMealsBetween(dates[0], dates[6]);
+    const data = await getMealsBetween(user.username, dates[0], dates[6]);
     setMeals(data);
     setLoading(false);
-  }, [dates[0], dates[6]]);
+  }, [dates[0], dates[6], user]);
 
   useEffect(() => { load(); }, [load]);
 
   // 每个会话清理一次：删除 2 周前的旧菜，节省存储
   useEffect(() => {
     if (!supabaseReady) return;
+    if (!user) return;
     if (sessionStorage.getItem('cleaned_old_meals')) return;
-    cleanupOldMeals().finally(() => sessionStorage.setItem('cleaned_old_meals', '1'));
-  }, []);
+    cleanupOldMeals(user.username).finally(() => sessionStorage.setItem('cleaned_old_meals', '1'));
+  }, [user]);
 
   function mealAt(date: string, type: MealType): Meal | undefined {
     return meals.find((m) => m.date === date && m.meal_type === type);
