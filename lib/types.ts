@@ -45,12 +45,18 @@ export interface Prep {
   done: boolean;
 }
 
+export interface User {
+  username: string;
+  display_name: string;
+}
+
 export interface Meal {
   id: string;
   date: string;             // YYYY-MM-DD
   meal_type: MealType;
   title: string;
   recipe: string;
+  health_note: string;      // AI 给的健康说明（结合健康状况）
   author: string;
   ingredients?: Ingredient[];
   preps?: Prep[];

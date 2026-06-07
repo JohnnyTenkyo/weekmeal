@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { getMealsBetween } from '@/lib/db';
+import { getMealsBetween, cleanupOldMeals } from '@/lib/db';
 import type { Meal, MealType } from '@/lib/types';
 import { MEAL_TYPES, MEAL_LABELS } from '@/lib/types';
 import { startOfWeek, weekDates, addDays, toYMD, WEEK_LABELS, ymdLabel, todayYMD } from '@/lib/date';
@@ -26,6 +26,13 @@ export default function WeekPage() {
   }, [dates[0], dates[6]]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 每个会话清理一次：删除 2 周前的旧菜，节省存储
+  useEffect(() => {
+    if (!supabaseReady) return;
+    if (sessionStorage.getItem('cleaned_old_meals')) return;
+    cleanupOldMeals().finally(() => sessionStorage.setItem('cleaned_old_meals', '1'));
+  }, []);
 
   function mealAt(date: string, type: MealType): Meal | undefined {
     return meals.find((m) => m.date === date && m.meal_type === type);

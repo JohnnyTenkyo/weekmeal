@@ -75,13 +75,13 @@ export async function POST(req: NextRequest) {
 
     let prompt: { system: string; user: string };
     if (task === 'recipe') {
-      prompt = recipePrompt(body.dish, prefs);
+      prompt = recipePrompt(body.dish, prefs, body.mealLabel, body.extra);
     } else if (task === 'weekplan') {
       prompt = weekPlanPrompt(prefs, body.weekDates);
     } else if (task === 'from-ingredients') {
       prompt = fromIngredientsPrompt(body.ingredients, prefs);
     } else if (task === 'suggest-dish') {
-      prompt = suggestDishPrompt(body.mealLabel, body.existingDishes || [], prefs);
+      prompt = suggestDishPrompt(body.mealLabel, body.existingDishes || [], prefs, body.extra);
     } else {
       return NextResponse.json({ error: '未知任务类型' }, { status: 400 });
     }

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
-import BottomNav from '@/components/BottomNav';
+import AppShell from '@/components/AppShell';
 
 export const metadata: Metadata = {
   title: '家味·一周菜单',
@@ -20,10 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <body>
-        <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-4 min-h-screen">
-          {children}
-        </main>
-        <BottomNav />
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

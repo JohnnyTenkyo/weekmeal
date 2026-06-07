@@ -1,15 +1,20 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { getSettings, saveSettings } from '@/lib/db';
+import { getSettings, saveSettings, changePassword } from '@/lib/db';
 import type { Settings, Prefs } from '@/lib/types';
 import { Button, SectionTitle, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
+import { useAuth } from '@/components/AuthProvider';
 import { supabaseReady } from '@/lib/supabase';
 
 const COMMON_AVOID = ['菌菇', '香菜', '内脏', '芹菜', '羊肉', '海鲜'];
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
+  const auth = useAuth();
+  const [oldPwd, setOldPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [pwdBusy, setPwdBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -21,6 +26,20 @@ export default function SettingsPage() {
   }, []);
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 1800); }
+
+  async function onChangePwd() {
+    if (!auth.user) { ping('请先登录'); return; }
+    if (!oldPwd || !newPwd) { ping('请填写旧密码和新密码'); return; }
+    if (newPwd.length < 4) { ping('新密码至少 4 位'); return; }
+    setPwdBusy(true);
+    try {
+      const r = await changePassword(auth.user.username, oldPwd, newPwd);
+      if (!r.ok) { ping(r.error || '修改失败'); return; }
+      setOldPwd(''); setNewPwd('');
+      ping('密码已修改 ✓');
+    } finally { setPwdBusy(false); }
+  }
+
 
   function setPrefs(patch: Partial<Prefs>) {
     if (!s) return;
@@ -156,6 +175,27 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {auth.user && (
+            <section className="card p-4">
+              <h3 className="mb-3 font-semibold">账号</h3>
+              <p className="mb-3 text-sm" style={{ color: 'var(--ink-soft)' }}>
+                当前登录：<span style={{ color: 'var(--ink)' }}>{auth.user.display_name || auth.user.username}</span>
+              </p>
+              <label className="mb-1 block text-sm" style={{ color: 'var(--ink-soft)' }}>旧密码</label>
+              <input type="password" value={oldPwd} onChange={(e) => setOldPwd(e.target.value)}
+                className="mb-3 w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              <label className="mb-1 block text-sm" style={{ color: 'var(--ink-soft)' }}>新密码</label>
+              <input type="password" value={newPwd} onChange={(e) => setNewPwd(e.target.value)}
+                className="mb-3 w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              <div className="flex gap-2">
+                <Button variant="soft" onClick={onChangePwd} disabled={pwdBusy} className="flex-1">
+                  {pwdBusy ? '修改中…' : '修改密码'}
+                </Button>
+                <Button variant="danger" onClick={() => auth.signOut()}>退出登录</Button>
+              </div>
+            </section>
+          )}
 
           <Button onClick={onSave} disabled={saving} className="w-full">
             {saving ? '保存中…' : '保存设置'}

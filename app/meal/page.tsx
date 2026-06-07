@@ -25,7 +25,8 @@ function MealEditor() {
   const [aiLoading, setAiLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const [suggestion, setSuggestion] = useState<{ title: string; reason: string } | null>(null);
+  const [suggestion, setSuggestion] = useState<{ title: string; reason: string; health_note?: string } | null>(null);
+  const [extra, setExtra] = useState('');
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
 
@@ -51,13 +52,13 @@ function MealEditor() {
       const resp = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'recipe', dish: title.trim() }),
+        body: JSON.stringify({ task: 'recipe', dish: title.trim(), mealLabel: MEAL_LABELS[type], extra: extra.trim() }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || 'AI 调用失败'); await load(); return; }
 
       const r = json.result;
-      await upsertMeal({ date, meal_type: type, title: title.trim(), recipe: r.recipe || '', author });
+      await upsertMeal({ date, meal_type: type, title: title.trim(), recipe: r.recipe || '', health_note: r.health_note || '', author });
       if (Array.isArray(r.ingredients)) {
         await replaceIngredients(saved.id, r.ingredients.map((i: any) => ({
           name: i.name || '', amount: i.amount || '',
@@ -102,11 +103,11 @@ function MealEditor() {
       const resp = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'suggest-dish', mealLabel: MEAL_LABELS[type], existingDishes: existing }),
+        body: JSON.stringify({ task: 'suggest-dish', mealLabel: MEAL_LABELS[type], existingDishes: existing, extra: extra.trim() }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || 'AI 推荐失败'); return; }
-      setSuggestion({ title: json.result.title || '', reason: json.result.reason || '' });
+      setSuggestion({ title: json.result.title || '', reason: json.result.reason || '', health_note: json.result.health_note || '' });
     } catch (e: any) {
       ping('出错：' + (e?.message || ''));
     } finally { setSuggestLoading(false); }
@@ -168,16 +169,22 @@ function MealEditor() {
             </div>
 
             <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--line)' }}>
-              <div className="flex items-center justify-between">
-                <span className="text-sm" style={{ color: 'var(--ink-soft)' }}>不喜欢这一餐？</span>
-                <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading || aiLoading}>
-                  {suggestLoading ? <Spinner label="AI 想菜中…" /> : '🔄 换一道菜'}
-                </Button>
-              </div>
+              <span className="mb-2 block text-sm" style={{ color: 'var(--ink-soft)' }}>不喜欢这一餐？换一道（可填要求，也可留空）</span>
+              <input value={extra} onChange={(e) => setExtra(e.target.value)}
+                placeholder="可选：比如想喝汤、想吃鱼、清爽点…"
+                className="mb-2 w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+              <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading || aiLoading} className="w-full">
+                {suggestLoading ? <Spinner label="AI 想菜中…" /> : '🔄 换一道菜'}
+              </Button>
               {suggestion && (
                 <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
                   <div className="mb-1 text-base font-semibold" style={{ color: 'var(--ink)' }}>{suggestion.title}</div>
-                  <p className="mb-3 text-sm" style={{ color: 'var(--ink-soft)' }}>{suggestion.reason}</p>
+                  <p className="mb-2 text-sm" style={{ color: 'var(--ink-soft)' }}>{suggestion.reason}</p>
+                  {suggestion.health_note && (
+                    <p className="mb-3 rounded-lg px-2.5 py-2 text-xs leading-relaxed" style={{ background: 'rgba(138,154,91,0.15)', color: 'var(--ink)' }}>
+                      <span style={{ color: 'var(--accent-2)' }}>💚 健康说明：</span>{suggestion.health_note}
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <Button onClick={acceptSuggestion} className="flex-1">采用这道</Button>
                     <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading}>再换一个</Button>
@@ -192,6 +199,13 @@ function MealEditor() {
             <section className="card p-4">
               <h3 className="mb-2 font-semibold">做法</h3>
               <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: 'var(--ink)' }}>{meal.recipe}</p>
+            </section>
+          )}
+
+          {meal?.health_note && (
+            <section className="card p-4" style={{ background: 'rgba(138,154,91,0.10)' }}>
+              <h3 className="mb-2 font-semibold" style={{ color: 'var(--accent-2)' }}>💚 健康说明</h3>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--ink)' }}>{meal.health_note}</p>
             </section>
           )}
 
