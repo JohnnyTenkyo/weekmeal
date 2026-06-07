@@ -27,7 +27,7 @@ function MealEditor() {
   const [aiLoading, setAiLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const [suggestion, setSuggestion] = useState<{ title: string; reason: string; health_note?: string } | null>(null);
+  const [suggestion, setSuggestion] = useState<{ dishes: string[]; reason: string; health_note?: string } | null>(null);
   const [extra, setExtra] = useState('');
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
@@ -114,7 +114,10 @@ function MealEditor() {
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || 'AI 推荐失败'); return; }
-      setSuggestion({ title: json.result.title || '', reason: json.result.reason || '', health_note: json.result.health_note || '' });
+      const ds = Array.isArray(json.result.dishes)
+        ? json.result.dishes.filter((x: any) => typeof x === 'string' && x.trim())
+        : (json.result.title ? [json.result.title] : []);
+      setSuggestion({ dishes: ds, reason: json.result.reason || '', health_note: json.result.health_note || '' });
     } catch (e: any) {
       ping('出错：' + (e?.message || ''));
     } finally { setSuggestLoading(false); }
@@ -122,10 +125,10 @@ function MealEditor() {
 
   // 采用推荐：填入输入框，清掉旧的做法/食材关联留待重新分析
   function acceptSuggestion() {
-    if (!suggestion) return;
-    setTitle(suggestion.title);
+    if (!suggestion || !suggestion.dishes.length) return;
+    setTitle(suggestion.dishes.join('、'));
     setSuggestion(null);
-    ping('已填入，可点「保存并让 AI 分析」出做法');
+    ping('已填入整顿菜，可点「保存并让 AI 分析」出做法');
   }
 
   async function handleDelete() {
@@ -185,7 +188,12 @@ function MealEditor() {
               </Button>
               {suggestion && (
                 <div className="mt-3 rounded-xl p-3" style={{ background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
-                  <div className="mb-1 text-base font-semibold" style={{ color: 'var(--ink)' }}>{suggestion.title}</div>
+                  <div className="mb-1 flex flex-wrap gap-1.5">
+                    {suggestion.dishes.map((d, idx) => (
+                      <span key={idx} className="rounded-lg px-2 py-0.5 text-sm font-semibold"
+                        style={{ background: 'var(--surface)', color: 'var(--ink)' }}>{d}</span>
+                    ))}
+                  </div>
                   <p className="mb-2 text-sm" style={{ color: 'var(--ink-soft)' }}>{suggestion.reason}</p>
                   {suggestion.health_note && (
                     <p className="mb-3 rounded-lg px-2.5 py-2 text-xs leading-relaxed" style={{ background: 'rgba(138,154,91,0.15)', color: 'var(--ink)' }}>
@@ -193,7 +201,7 @@ function MealEditor() {
                     </p>
                   )}
                   <div className="flex gap-2">
-                    <Button onClick={acceptSuggestion} className="flex-1">采用这道</Button>
+                    <Button onClick={acceptSuggestion} className="flex-1">采用这顿</Button>
                     <Button variant="soft" onClick={handleSuggest} disabled={suggestLoading}>再换一个</Button>
                     <Button variant="ghost" onClick={() => setSuggestion(null)}>取消</Button>
                   </div>

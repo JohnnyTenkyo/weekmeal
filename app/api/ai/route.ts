@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
     } else if (task === 'weekplan') {
       prompt = weekPlanPrompt(prefs, body.weekDates);
     } else if (task === 'from-ingredients') {
-      prompt = fromIngredientsPrompt(body.ingredients, prefs);
+      prompt = fromIngredientsPrompt(body.ingredients, prefs, body.mealLabel);
     } else if (task === 'suggest-dish') {
       prompt = suggestDishPrompt(body.mealLabel, body.existingDishes || [], prefs, body.extra);
     } else if (task === 'dish-from-given') {

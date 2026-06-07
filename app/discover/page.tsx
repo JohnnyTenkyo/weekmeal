@@ -12,7 +12,8 @@ import { useAuth } from '@/components/AuthProvider';
 import type { Prefs } from '@/lib/types';
 
 interface DayPlan { date: string; breakfast: string; lunch: string; dinner: string; }
-interface DishRec { title: string; reason: string; missing: string[]; }
+interface PlanDish { title: string; uses: string[]; missing: string[]; }
+interface MealPlanRec { dishes: PlanDish[]; summary: string; }
 
 export default function DiscoverPage() {
   const router = useRouter();
@@ -36,8 +37,9 @@ export default function DiscoverPage() {
 
   // 冰箱反推
   const [fridge, setFridge] = useState('');
+  const [fridgeMeal, setFridgeMeal] = useState<MealType>('dinner');
   const [fridgeLoading, setFridgeLoading] = useState(false);
-  const [dishes, setDishes] = useState<DishRec[] | null>(null);
+  const [fridgePlans, setFridgePlans] = useState<MealPlanRec[] | null>(null);
   // 把推荐菜加入某天某餐
   const [addSel, setAddSel] = useState<Record<number, { date: string; type: MealType }>>({});
   const [addingIdx, setAddingIdx] = useState<number | null>(null);
@@ -46,31 +48,33 @@ export default function DiscoverPage() {
   const dayOptions = Array.from({ length: 7 }, (_, i) => toYMD(addDays(parseYMD(todayYMD()), i)));
 
   function selFor(i: number) {
-    return addSel[i] || { date: dayOptions[0], type: 'dinner' as MealType };
+    return addSel[i] || { date: dayOptions[0], type: fridgeMeal };
   }
   function setSel(i: number, patch: Partial<{ date: string; type: MealType }>) {
     setAddSel((prev) => ({ ...prev, [i]: { ...selFor(i), ...patch } }));
   }
 
-  // 用现有食材做这道菜并覆盖到选定的那一餐
-  async function addDishToMeal(i: number, dish: DishRec) {
+  // 把整顿方案做出来并覆盖到选定的那一餐
+  async function addDishToMeal(i: number, plan: MealPlanRec) {
     const sel = selFor(i);
+    const dishTitles = plan.dishes.map((d) => d.title).filter(Boolean);
+    if (!dishTitles.length) { ping('这套方案没有菜'); return; }
     setAddingIdx(i);
     try {
       const resp = await fetch('/api/ai', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          task: 'dish-from-given', dish: dish.title, available: fridge.trim(),
+          task: 'dish-from-given', dish: dishTitles.join('、'), available: fridge.trim(),
           mealLabel: MEAL_LABELS[sel.type], username: user?.username,
         }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || '生成失败'); return; }
       const r = json.result;
-      // 覆盖那一餐
+      // 覆盖那一餐（标题=整顿的菜名，用、连接）
       const saved = await upsertMeal({
         owner: user!.username, date: sel.date, meal_type: sel.type,
-        title: dish.title, recipe: r.recipe || '', health_note: r.health_note || '', author: 'AI',
+        title: dishTitles.join('、'), recipe: r.recipe || '', health_note: r.health_note || '', author: 'AI',
       });
       if (Array.isArray(r.ingredients)) {
         await replaceIngredients(saved.id, r.ingredients.map((x: any) => ({ name: x.name || '', amount: x.amount || '' })));
@@ -166,15 +170,16 @@ export default function DiscoverPage() {
 
   async function genFridge() {
     if (!fridge.trim()) { ping('先填一下现有的食材'); return; }
-    setFridgeLoading(true); setDishes(null);
+    setFridgeLoading(true); setFridgePlans(null);
     try {
       const resp = await fetch('/api/ai', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'from-ingredients', ingredients: fridge.trim(), username: user?.username }),
+        body: JSON.stringify({ task: 'from-ingredients', ingredients: fridge.trim(), mealLabel: MEAL_LABELS[fridgeMeal], username: user?.username }),
       });
       const json = await resp.json();
       if (!resp.ok) { ping(json.error || '推荐失败'); return; }
-      setDishes(json.result.dishes as DishRec[]);
+      const plans = Array.isArray(json.result.plans) ? json.result.plans : [];
+      setFridgePlans(plans as MealPlanRec[]);
     } catch (e: any) { ping('出错：' + (e?.message || '')); }
     finally { setFridgeLoading(false); }
   }
@@ -262,29 +267,63 @@ export default function DiscoverPage() {
             <textarea value={fridge} onChange={(e) => setFridge(e.target.value)}
               rows={3} placeholder="比如：鸡蛋、西兰花、豆腐、鲈鱼、胡萝卜"
               className="mb-3 w-full rounded-xl border bg-white px-3 py-2 text-sm" style={{ borderColor: 'var(--line)' }} />
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-sm" style={{ color: 'var(--ink-soft)' }}>凑成哪一顿：</span>
+              {MEAL_TYPES.map((t) => (
+                <button key={t} onClick={() => setFridgeMeal(t)}
+                  className="rounded-full px-3 py-1 text-sm transition"
+                  style={{
+                    background: fridgeMeal === t ? 'var(--accent)' : 'var(--surface)',
+                    color: fridgeMeal === t ? '#fff' : 'var(--ink-soft)',
+                    border: '1px solid var(--line)',
+                  }}>{MEAL_LABELS[t]}</button>
+              ))}
+            </div>
             <Button onClick={genFridge} disabled={fridgeLoading} className="w-full">
-              {fridgeLoading ? <Spinner label="AI 思考中…" /> : '看看能做什么菜'}
+              {fridgeLoading ? <Spinner label="AI 思考中…" /> : `凑一顿够吃的（${MEAL_LABELS[fridgeMeal]}）`}
             </Button>
           </div>
 
-          {dishes && (
-            <div className="space-y-2">
-              {dishes.map((d, i) => {
+          {fridgePlans && (
+            <div className="space-y-3">
+              {fridgePlans.length === 0 && (
+                <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>没凑出方案，换些食材或换一顿试试</p>
+              )}
+              {fridgePlans.map((plan, i) => {
                 const sel = selFor(i);
+                const allMissing = Array.from(new Set(plan.dishes.flatMap((d) => d.missing || []).filter(Boolean)));
                 return (
                 <div key={i} className="card p-4">
-                  <h4 className="mb-1 font-semibold">{d.title}</h4>
-                  <p className="mb-2 text-sm" style={{ color: 'var(--ink-soft)' }}>{d.reason}</p>
-                  {d.missing && d.missing.length > 0 && (
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="rounded-full px-2 py-0.5 text-xs font-medium" style={{ background: 'var(--accent)', color: '#fff' }}>方案 {i + 1}</span>
+                    <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{MEAL_LABELS[fridgeMeal]} · 够{(prefs?.peopleCount || 2)}人</span>
+                  </div>
+                  {plan.summary && <p className="mb-2 text-sm" style={{ color: 'var(--ink-soft)' }}>{plan.summary}</p>}
+                  <div className="mb-2 space-y-1">
+                    {plan.dishes.map((d, j) => (
+                      <div key={j} className="flex flex-wrap items-center gap-1.5 rounded-lg px-2 py-1.5" style={{ background: 'var(--surface-2)' }}>
+                        <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{d.title}</span>
+                        {d.uses && d.uses.length > 0 && (
+                          <span className="text-xs" style={{ color: 'var(--accent-2)' }}>家里有：{d.uses.join('、')}</span>
+                        )}
+                        {d.missing && d.missing.length > 0 && (
+                          <span className="text-xs" style={{ color: 'var(--warn)' }}>需补：{d.missing.join('、')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {allMissing.length > 0 ? (
                     <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>还需补买：</span>
-                      {d.missing.map((m, j) => (
+                      <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>这套还需补买：</span>
+                      {allMissing.map((m, j) => (
                         <span key={j} className="chip px-2.5 py-0.5 text-xs">{m}</span>
                       ))}
                     </div>
+                  ) : (
+                    <p className="mb-3 text-xs" style={{ color: 'var(--accent-2)' }}>现有食材就够这一顿，无需补买 ✓</p>
                   )}
                   <div className="mt-2 border-t pt-3" style={{ borderColor: 'var(--line)' }}>
-                    <p className="mb-2 text-xs" style={{ color: 'var(--ink-soft)' }}>加入到哪一餐（会覆盖那一餐，只用你现有的食材按人数做够）</p>
+                    <p className="mb-2 text-xs" style={{ color: 'var(--ink-soft)' }}>把这一顿写到未来 7 天的某天某餐（会覆盖那一餐）</p>
                     <div className="flex gap-2">
                       <select value={sel.date} onChange={(e) => setSel(i, { date: e.target.value })}
                         className="flex-1 rounded-xl border bg-white px-2 py-2 text-sm" style={{ borderColor: 'var(--line)' }}>
@@ -299,8 +338,8 @@ export default function DiscoverPage() {
                         ))}
                       </select>
                     </div>
-                    <Button onClick={() => addDishToMeal(i, d)} disabled={addingIdx !== null} className="mt-2 w-full">
-                      {addingIdx === i ? <Spinner label="生成并写入中…" /> : '用现有食材做这道并加入'}
+                    <Button onClick={() => addDishToMeal(i, plan)} disabled={addingIdx !== null} className="mt-2 w-full">
+                      {addingIdx === i ? <Spinner label="生成并写入中…" /> : '做这一顿并写入'}
                     </Button>
                   </div>
                 </div>

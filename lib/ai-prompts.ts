@@ -15,6 +15,22 @@ export function portionConstraint(p: Prefs): string {
   return `【份量】这一餐共 ${people} 人吃，目标${fullnessLabel(full)}。所有食材用量必须按 ${people} 人的量来计算，确保够吃、不浪费，主食和菜量都要匹配人数。`;
 }
 
+// 一餐该上几道菜：按人数和餐别给出合理的菜品数量，保证够吃
+export function mealCompositionRule(p: Prefs, mealLabel?: string): string {
+  const people = p.peopleCount && p.peopleCount > 0 ? p.peopleCount : 2;
+  const isBreakfast = mealLabel ? mealLabel.includes('早') : false;
+  let dishHint: string;
+  if (isBreakfast) {
+    dishHint = people <= 2
+      ? '早餐安排 2~3 样（如主食/粥 + 1~2 个清淡小菜或蛋类），简单够吃即可'
+      : `早餐安排 ${Math.max(3, Math.ceil(people / 1.5))} 样左右（主食/粥 + 几样小菜/蛋），让 ${people} 人都吃饱`;
+  } else {
+    const base = Math.max(2, Math.round(people / 1.5) + 1); // 含主食在内的大致菜数
+    dishHint = `这是正餐，按 ${people} 人的饭量安排 ${base}~${base + 1} 道菜（其中包含 1 份主食，其余为荤素搭配的菜，多用鱼/禽/豆制品/时蔬），保证 ${people} 个人吃饱吃好、荤素均衡`;
+  }
+  return `【一餐的构成】${dishHint}。一顿饭不是只做一道菜，要像家里正常开饭那样有主食有菜、数量够 ${people} 人吃。`;
+}
+
 // 量化要求：精确克数 + 通俗说法
 const QUANTIFY_RULE =
   '【用量必须量化】每一样食材和调料都要给出精确克数/毫升/个数，并在括号里补一个通俗说法，方便不用秤也能下厨，例如「生抽 15 克（约一汤勺）」「盐 3 克（约半茶匙）」「五花肉 250 克（约半斤）」「油 10 克（约一勺）」。常见换算参考：一茶匙≈5克、一汤勺/一勺≈15克、一斤=500克、半斤=250克。做法步骤里凡涉及调味也要写清用量。';
@@ -118,38 +134,58 @@ export function weekPlanPrompt(prefs: Prefs, weekDates: string[]) {
   };
 }
 
-// 3) 根据现有食材反推能做的菜
-export function fromIngredientsPrompt(ingredients: string, prefs: Prefs) {
+// 3) 根据现有食材反推：凑成够 N 人吃的一整顿饭（不够可补充额外食材）
+export function fromIngredientsPrompt(ingredients: string, prefs: Prefs, mealLabel?: string) {
   const constraints = prefsToConstraints(prefs);
+  const composition = mealCompositionRule(prefs, mealLabel);
+  const mealText = mealLabel ? `这一顿是【${mealLabel}】。` : '这是一顿正餐。';
   return {
-    system: `你是广式家常菜厨师兼营养师。严格遵守：\n${constraints}\n\n只输出 JSON，不要额外文字或 markdown 标记。`,
-    user: `我现在家里有这些食材：${ingredients}。\n请在符合约束的前提下，推荐 3~5 道可以做的菜，可以补充少量常见调料/配菜。\n严格按如下 JSON 结构返回：\n{\n  "dishes": [\n    {"title":"菜名","reason":"为什么推荐/用到哪些现有食材","missing":["还需补买的少量食材"]}\n  ]\n}`,
+    system: `你是广式家常菜厨师兼营养师。严格遵守：
+${constraints}
+
+【以现有食材为核心、凑够一整顿】用户想优先消化家里现有的食材，但最终这一顿必须够设置的人数吃。规则：
+1）尽量把现有食材用进去，可以分散到不同菜里（比如胡萝卜一道菜、鸡蛋另一道菜），也可以放进同一道菜，怎么合理怎么来；
+2）如果光靠现有食材不够这么多人吃，就【补充额外食材】，多出来的食材列进每道菜的 missing（需要去买/补充的）；
+3）如果现有食材已经足够这一顿吃饱，就不必补充，missing 给空数组；
+4）整顿要符合上面的菜数和荤素搭配要求，含主食。
+
+只输出 JSON，不要额外文字或 markdown 标记。`,
+    user: `我现在家里有这些食材：${ingredients}。${mealText}
+请据此搭配出【2~3 套】可选的整顿方案，每套都是够上述人数吃的一顿饭（多道菜、含主食），优先用上我现有的食材，不够的部分注明要补买什么。
+严格按如下 JSON 结构返回：
+{
+  "plans": [
+    {"dishes":[{"title":"菜名","uses":["这道菜用到的我现有的食材"],"missing":["这道菜还需补买的食材，没有就空数组"]}],"summary":"这套方案一句话说明（够几人吃、用了哪些现有食材）"}
+  ]
+}`,
   };
 }
 
-// 3b) 用指定的现有食材做一道菜，写入某一餐（只用列出的原材料）
-export function dishFromGivenPrompt(dish: string, available: string, prefs: Prefs, mealLabel?: string) {
+// 3b) 把"一整顿方案"做出来，写入某一餐：以现有食材为主，不够可补买
+export function dishFromGivenPrompt(dishes: string, available: string, prefs: Prefs, mealLabel?: string) {
   const constraints = prefsToConstraints(prefs);
   const guide = mealLabel ? mealGuide(mealLabel) : '';
+  const composition = mealCompositionRule(prefs, mealLabel);
   return {
     system: `你是一位贴心的家庭营养师兼广式家常菜厨师。请严格遵守以下约束：
 ${constraints}
 ${guide}
+${composition}
 ${QUANTIFY_RULE}
 ${PREP_RULE}
 
-【只用现有食材】用户只想用家里现有的原材料做这道菜。ingredients 里【只能】包含用户提供的这些原材料（可以只用其中一部分），绝对不要引入用户没有的新原材料；唯一例外是水、盐、生抽、油这类最基本的厨房调味料可以少量使用。即便份量要满足人数，也只能在现有食材范围内调配。
+【以现有食材为主、凑够一整顿】这一顿要做用户选定的这几道菜，凑成够设置人数吃的一整顿饭。优先使用用户现有的食材，把它们用进对应的菜里；如果现有食材不够这么多人吃，可以补充额外食材，但要把所有补充/需要去买的食材也如实列进 ingredients。ingredients 要包含这一整顿所有菜需要的全部原材料（现有的 + 需补买的），每样用量按人数量化。
 
 只输出 JSON，不要任何额外文字或 markdown 代码块标记。`,
-    user: `请用我现有的这些食材：${available}，做「${dish}」。份量要满足上述人数、保证够吃，但原材料只能从我列出的里面选。
+    user: `我家里现有这些食材：${available}。请帮我把这一顿（包含这几道菜：${dishes}）做出来，份量要够上述人数吃。优先用我现有的食材，不够的可以补充，但补充的食材也要列进采购清单。
 严格按如下 JSON 结构返回：
 {
-  "recipe": "分步骤做法，用换行分隔，调味用量要量化（克数+通俗说法）",
-  "health_note": "结合用户健康状况，说明这道菜对身体的好处或注意点，2-3 句",
-  "ingredients": [{"name":"食材名（必须来自我提供的列表）","amount":"精确克数+通俗说法"}],
+  "recipe": "这一整顿所有菜的分步骤做法，按菜分段、用换行分隔，调味用量量化（克数+通俗说法）",
+  "health_note": "结合用户健康状况，说明这顿对身体的好处或注意点，2-3 句",
+  "ingredients": [{"name":"食材名","amount":"精确克数+通俗说法","have":true}],
   "preps": [{"item":"要做的事","kind":"defrost或prep","when":"same或prev","time":"HH:MM"}]
 }
-preps 按上面规则给出 when 和 time；不需要预处理才给空数组。`,
+ingredients 里 have 字段：我现有的食材填 true，需要补买的填 false。preps 按上面规则给出 when 和 time；不需要预处理才给空数组。`,
   };
 }
 
@@ -168,20 +204,22 @@ export function suggestDishPrompt(
     : '本周暂时没有其它菜。';
   const extraText = extra && extra.trim() ? `
 用户的额外要求：${extra.trim()}。请在不违反健康约束的前提下尽量满足。` : '';
+  const composition = mealCompositionRule(prefs, mealLabel);
   return {
-    system: `你是广式家常菜厨师兼营养师，为高血脂人群推荐清淡健康的单道菜。严格遵守：
+    system: `你是广式家常菜厨师兼营养师，为高血脂人群推荐清淡健康的一整顿饭。严格遵守：
 ${constraints}
 ${guide}
+${composition}
 
 只输出 JSON，不要任何额外文字或 markdown 标记。`,
-    user: `请为「${mealLabel}」推荐一道新菜。
+    user: `请为「${mealLabel}」重新搭配【一整顿饭】（多道菜，份量够上述人数吃）。
 ${avoidText}${extraText}
-要求：符合上述健康与口味约束；菜式份量要与餐别相称（早餐就给早餐，不要给正餐大菜）；尽量与已有菜在主料、做法上有区分。
-严格按如下 JSON 结构返回：
+要求：符合上述健康与口味约束；严格按【一餐的构成】给出的道数来安排，不要只给一道菜；与已有菜在主料、做法上尽量有区分；荤素搭配、含主食。
+严格按如下 JSON 结构返回（dishes 数组，每道一个元素）：
 {
-  "title": "菜名",
-  "reason": "一句话推荐理由",
-  "health_note": "结合用户健康状况，说明这道菜对身体的好处，1-2 句"
+  "dishes": ["菜名1", "菜名2", "菜名3"],
+  "reason": "一句话说明这顿这样搭配的理由",
+  "health_note": "结合用户健康状况，说明这顿对身体的好处，1-2 句"
 }`,
   };
 }
