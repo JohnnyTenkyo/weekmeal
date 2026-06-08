@@ -7,6 +7,7 @@ import {
 } from '@/lib/db';
 import type { Meal, MealType, Ingredient, Prep } from '@/lib/types';
 import { MEAL_LABELS } from '@/lib/types';
+import { parseRecipeSections } from '@/lib/recipe-format';
 import { ymdLabel, addDays, parseYMD, toYMD, startOfWeek, weekDates } from '@/lib/date';
 import { Button, Spinner, Toast } from '@/components/ui';
 import ConfigBanner from '@/components/ConfigBanner';
@@ -31,6 +32,8 @@ function MealEditor() {
   const [extra, setExtra] = useState('');
 
   function ping(m: string) { setToast(m); setTimeout(() => setToast(null), 2000); }
+
+  const recipeSections = meal?.recipe ? parseRecipeSections(meal.recipe) : [];
 
   const load = useCallback(async () => {
     if (!supabaseReady || !date || !user) { setLoading(false); return; }
@@ -212,8 +215,27 @@ function MealEditor() {
 
           {meal?.recipe && (
             <section className="card p-4">
-              <h3 className="mb-2 font-semibold">做法</h3>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: 'var(--ink)' }}>{meal.recipe}</p>
+              <h3 className="mb-3 font-semibold">做法</h3>
+              <div className="space-y-3">
+                {recipeSections.map((section, idx) => (
+                  <div key={idx} className="rounded-2xl border p-3"
+                    style={{ background: 'var(--surface-2)', borderColor: 'var(--line)' }}>
+                    {section.title && (
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
+                          style={{ background: 'var(--accent)' }}>菜 {idx + 1}</span>
+                        <h4 className="text-base font-bold" style={{ color: 'var(--ink)' }}>{section.title}</h4>
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      {section.steps.map((step, stepIdx) => (
+                        <p key={stepIdx} className="whitespace-pre-wrap text-sm leading-relaxed"
+                          style={{ color: 'var(--ink)' }}>{step}</p>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
